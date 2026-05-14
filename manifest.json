@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Paste Typer",
+  "version": "1.0.0",
+  "description": "Types clipboard text character-by-character into web forms. Useful for fields that don't accept paste and for data-entry workflows.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "contextMenus",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/inputAdapter.js",
+        "content/googleDocsAdapter.js",
+        "content/standardInputAdapter.js",
+        "content/adapterManager.js",
+        "content.js"
+      ],
+      "run_at": "document_end",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "96": "icon96.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Paste Typer - Type text naturally",
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png",
+      "48": "icon48.png",
+      "96": "icon96.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["floating-ui.html", "floating-ui.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

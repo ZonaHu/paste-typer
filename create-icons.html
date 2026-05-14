@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create Extension Icons</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    canvas {
+      border: 1px solid #ddd;
+      margin: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    .icon-preview {
+      display: inline-block;
+      margin: 10px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>Create Extension Icons</h1>
+  <p>This tool creates simple placeholder icons for testing. For production, use proper icon design tools.</p>
+  
+  <div>
+    <label>Icon Text: <input type="text" id="iconText" value="PT" maxlength="2"></label>
+    <label>Background Color: <input type="color" id="bgColor" value="#4CAF50"></label>
+    <label>Text Color: <input type="color" id="textColor" value="#FFFFFF"></label>
+  </div>
+  
+  <button onclick="createIcons()">Create Icons</button>
+  <button onclick="downloadAll()">Download All Icons</button>
+  
+  <div id="previews"></div>
+  
+  <script>
+    function createIcon(size, text, bgColor, textColor) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      
+      // Draw background
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Draw text
+      ctx.fillStyle = textColor;
+      ctx.font = `bold ${size * 0.6}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, size / 2, size / 2);
+      
+      return canvas;
+    }
+    
+    function createIcons() {
+      const text = document.getElementById('iconText').value || 'PT';
+      const bgColor = document.getElementById('bgColor').value;
+      const textColor = document.getElementById('textColor').value;
+      
+      const sizes = [16, 48, 128];
+      const previews = document.getElementById('previews');
+      previews.innerHTML = '';
+      
+      window.iconCanvases = {};
+      
+      sizes.forEach(size => {
+        const canvas = createIcon(size, text, bgColor, textColor);
+        window.iconCanvases[`icon${size}.png`] = canvas;
+        
+        const div = document.createElement('div');
+        div.className = 'icon-preview';
+        div.innerHTML = `
+          <canvas width="${size}" height="${size}" style="width: ${size * 2}px; height: ${size * 2}px; image-rendering: pixelated;"></canvas>
+          <div>icon${size}.png (${size}x${size})</div>
+          <button onclick="downloadIcon('icon${size}.png')">Download</button>
+        `;
+        const previewCanvas = div.querySelector('canvas');
+        previewCanvas.getContext('2d').drawImage(canvas, 0, 0, size, size);
+        previews.appendChild(div);
+      });
+    }
+    
+    function downloadIcon(filename) {
+      const canvas = window.iconCanvases[filename];
+      if (!canvas) {
+        alert('Please create icons first!');
+        return;
+      }
+      
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+    
+    function downloadAll() {
+      if (!window.iconCanvases) {
+        alert('Please create icons first!');
+        return;
+      }
+      
+      Object.keys(window.iconCanvases).forEach(filename => {
+        setTimeout(() => downloadIcon(filename), 100);
+      });
+    }
+    
+    // Create icons on load
+    window.onload = () => createIcons();
+  </script>
+</body>
+</html>

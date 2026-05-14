@@ -1,0 +1,14 @@
+# Build artifacts
+paste-typer-store.zip
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo

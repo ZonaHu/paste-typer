@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Paste Typer Icons</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+            padding: 20px;
+        }
+        .icon-container {
+            display: inline-block;
+            margin: 20px;
+            text-align: center;
+        }
+        .icon {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            position: relative;
+            overflow: hidden;
+        }
+        .icon::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%);
+            transform: rotate(45deg);
+        }
+        .icon-16 {
+            width: 16px;
+            height: 16px;
+            font-size: 10px;
+        }
+        .icon-48 {
+            width: 48px;
+            height: 48px;
+            font-size: 24px;
+        }
+        .icon-128 {
+            width: 128px;
+            height: 128px;
+            font-size: 64px;
+        }
+        .instructions {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #4CAF50;
+        }
+        .keyboard-icon {
+            font-family: monospace;
+            position: relative;
+        }
+        .keyboard-icon::after {
+            content: '|';
+            animation: blink 1s infinite;
+            margin-left: 2px;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="instructions">
+        <h2>📋 How to Use These Icons</h2>
+        <ol>
+            <li><strong>Screenshot Method:</strong> Right-click each icon below → "Save image as" or use screenshot tool</li>
+            <li><strong>Browser Tool:</strong> Use browser developer tools to save as PNG</li>
+            <li><strong>Online Converter:</strong> Copy this HTML and use an HTML-to-PNG converter</li>
+            <li><strong>Quick Alternative:</strong> Use the emoji versions below for testing</li>
+        </ol>
+    </div>
+
+    <h2>Gradient Icons (Recommended)</h2>
+    <div class="icon-container">
+        <div class="icon icon-16 keyboard-icon">T</div>
+        <p>16x16px<br/>icon16.png</p>
+    </div>
+
+    <div class="icon-container">
+        <div class="icon icon-48 keyboard-icon">T</div>
+        <p>48x48px<br/>icon48.png</p>
+    </div>
+
+    <div class="icon-container">
+        <div class="icon icon-128 keyboard-icon">T</div>
+        <p>128x128px<br/>icon128.png</p>
+    </div>
+
+    <h2>Simple Emoji Icons (Fallback)</h2>
+    <div class="icon-container">
+        <div style="font-size: 16px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;">🖊️</div>
+        <p>16x16px</p>
+    </div>
+
+    <div class="icon-container">
+        <div style="font-size: 32px; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">🖊️</div>
+        <p>48x48px</p>
+    </div>
+
+    <div class="icon-container">
+        <div style="font-size: 96px; width: 128px; height: 128px; display: flex; align-items: center; justify-content: center;">🖊️</div>
+        <p>128x128px</p>
+    </div>
+
+    <div class="instructions">
+        <h3>🚀 Quick Start Options:</h3>
+        <p><strong>Option 1:</strong> Open this HTML file in Chrome → Right-click each icon → "Save image as..."</p>
+        <p><strong>Option 2:</strong> Use <a href="https://favicon.io/favicon-generator/" target="_blank">favicon.io</a> with text "T" and green background</p>
+        <p><strong>Option 3:</strong> Download from <a href="https://icons8.com/icons/set/typing" target="_blank">Icons8</a> (search "typing" or "keyboard")</p>
+        <p><strong>Option 4:</strong> For testing only, temporarily remove icon references from manifest.json</p>
+    </div>
+
+    <script>
+        // Add some interactivity to demonstrate the icons
+        document.querySelectorAll('.icon').forEach(icon => {
+            icon.addEventListener('mouseenter', () => {
+                icon.style.transform = 'scale(1.1)';
+                icon.style.transition = 'transform 0.2s';
+            });
+            icon.addEventListener('mouseleave', () => {
+                icon.style.transform = 'scale(1)';
+            });
+        });
+    </script>
+</body>
+</html>
