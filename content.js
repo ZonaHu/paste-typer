@@ -112,13 +112,17 @@ class PasteTyper {
         });
       } else if (request.action === 'getActiveElement') {
         const element = document.activeElement;
-        sendResponse({
-          tagName: element.tagName,
-          type: element.type,
-          id: element.id,
-          className: element.className,
-          isEditable: this.isEditableElement(element)
-        });
+        if (!element) {
+          sendResponse({ tagName: '', type: '', id: '', className: '', isEditable: false });
+        } else {
+          sendResponse({
+            tagName: element.tagName,
+            type: element.type,
+            id: element.id,
+            className: element.className,
+            isEditable: this.isEditableElement(element)
+          });
+        }
       } else if (request.action === 'findAndHighlightInputs') {
         const count = this.findAndHighlightInputs();
         sendResponse({count: count});

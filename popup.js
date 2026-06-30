@@ -368,8 +368,9 @@ class PopupController {
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
+      const url = (tab && tab.url) || '';
 
-      if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
         this.elementInfo.textContent = '⚠️ Extension pages not supported. Navigate to a regular website.';
         this.elementInfo.style.display = 'block';
         this.startButton.disabled = true;
@@ -439,9 +440,10 @@ class PopupController {
   async sendMessageToTab(message) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
-    
+    const url = (tab && tab.url) || '';
+
     // Check if tab URL is valid for content scripts
-    if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('moz-extension://')) {
+    if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('moz-extension://')) {
       throw new Error('Extension cannot run on this page. Please navigate to a regular website.');
     }
     
@@ -539,8 +541,9 @@ class PopupController {
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
-      
-      if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      const url = (tab && tab.url) || '';
+
+      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
         this.showStatus('Cannot open floating UI on this page', 'error');
         return;
       }
