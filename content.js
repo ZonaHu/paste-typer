@@ -434,41 +434,9 @@ class PasteTyper {
         this.isTyping = false;
         throw error; // 重新抛出错误，让 popup 知道失败了
       }
-    }
-
-    // 原有逻辑（向后兼容）
-    let targetElement;
-    if (useActiveElement) {
-      targetElement = document.activeElement;
-      if (!this.isEditableElement(targetElement)) {
-        targetElement = this.findBestEditableElement();
-      }
     } else {
-      targetElement = this.findBestEditableElement();
+      throw new Error('Adapter manager not available');
     }
-
-    if (!targetElement || !this.isEditableElement(targetElement)) {
-      throw new Error('No editable input field found on this page');
-    }
-
-    this.isTyping = true;
-    this.isPaused = false;
-    this.currentText = text;
-    this.currentPosition = 0;
-    this.targetElement = targetElement;
-    
-    // Focus the element
-    targetElement.focus();
-    
-    // Clear existing content if it's an input/textarea
-    if (targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA') {
-      targetElement.value = '';
-    } else if (targetElement.contentEditable === 'true') {
-      targetElement.textContent = '';
-    }
-
-    // Start typing character by character
-    await this.continueTyping();
   }
 
   async continueTyping() {
@@ -505,15 +473,11 @@ class PasteTyper {
           await this.sleep(this.pauseDuration);
         }
         
-        // Type the character using adapter or legacy method
-        if (this.currentAdapter) {
-          const result = await this.currentAdapter.typeCharacter(this.targetElement, char);
-          if (!result.success) {
-            debug.warn('[PasteTyper] Failed to type character:', char, result.error);
-            // 继续尝试下一个字符，不中断整个流程
-          }
-        } else {
-          await this.typeCharacter(this.targetElement, char);
+        // Type the character using the adapter
+        const result = await this.currentAdapter.typeCharacter(this.targetElement, char);
+        if (!result.success) {
+          debug.warn('[PasteTyper] Failed to type character:', char, result.error);
+          // 继续尝试下一个字符，不中断整个流程
         }
         this.currentPosition++;
       }
@@ -549,42 +513,26 @@ class PasteTyper {
     
     if (!typoChar) {
       // If we can't generate a typo, just type the character normally
-      if (this.currentAdapter) {
-        await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
-      } else {
-        await this.typeCharacter(this.targetElement, correctChar);
-      }
+      await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
       this.currentPosition++;
       return;
     }
-    
+
     // Type the typo character
-    if (this.currentAdapter) {
-      await this.currentAdapter.typeCharacter(this.targetElement, typoChar);
-    } else {
-      await this.typeCharacter(this.targetElement, typoChar);
-    }
-    
+    await this.currentAdapter.typeCharacter(this.targetElement, typoChar);
+
     // Wait a bit (human realizes the mistake)
     await this.sleep(this.typoCorrectionDelay);
-    
+
     // Delete the typo (backspace)
-    if (this.currentAdapter) {
-      await this.currentAdapter.simulateBackspace(this.targetElement);
-    } else {
-      await this.simulateBackspace(this.targetElement);
-    }
-    
+    await this.currentAdapter.simulateBackspace(this.targetElement);
+
     // Small pause before typing correct character
     await this.sleep(50 + Math.random() * 50);
-    
+
     // Type the correct character
-    if (this.currentAdapter) {
-      await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
-    } else {
-      await this.typeCharacter(this.targetElement, correctChar);
-    }
-    
+    await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
+
     // Move position forward
     this.currentPosition++;
   }
@@ -614,124 +562,6 @@ class PasteTyper {
     }
     
     return null;
-  }
-
-  async simulateBackspace(element) {
-    // Legacy backspace simulation
-    const backspaceDown = new KeyboardEvent('keydown', {
-      key: 'Backspace',
-      code: 'Backspace',
-      keyCode: 8,
-      bubbles: true,
-      cancelable: true
-    });
-    
-    element.dispatchEvent(backspaceDown);
-    
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const currentValue = element.value;
-      if (currentValue.length > 0) {
-        const start = element.selectionStart;
-        element.value = currentValue.substring(0, start - 1) + currentValue.substring(start);
-        element.selectionStart = element.selectionEnd = start - 1;
-      }
-    } else if (element.contentEditable === 'true' || element.isContentEditable) {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        if (range.startOffset > 0) {
-          range.setStart(range.startContainer, range.startOffset - 1);
-          range.deleteContents();
-        }
-      }
-    }
-    
-    const inputEvent = new InputEvent('input', {
-      inputType: 'deleteContentBackward',
-      bubbles: true,
-      cancelable: false
-    });
-    element.dispatchEvent(inputEvent);
-    
-    await this.sleep(10);
-  }
-
-  async typeCharacter(element, char) {
-    // Create and dispatch keyboard events
-    const keydownEvent = new KeyboardEvent('keydown', {
-      key: char,
-      code: this.getKeyCode(char),
-      bubbles: true,
-      cancelable: true
-    });
-    
-    const keypressEvent = new KeyboardEvent('keypress', {
-      key: char,
-      code: this.getKeyCode(char),
-      bubbles: true,
-      cancelable: true
-    });
-    
-    const inputEvent = new InputEvent('input', {
-      data: char,
-      inputType: 'insertText',
-      bubbles: true,
-      cancelable: true
-    });
-    
-    const keyupEvent = new KeyboardEvent('keyup', {
-      key: char,
-      code: this.getKeyCode(char),
-      bubbles: true,
-      cancelable: true
-    });
-
-    // Dispatch events in order
-    element.dispatchEvent(keydownEvent);
-    element.dispatchEvent(keypressEvent);
-    
-    // Actually insert the character
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
-      const value = element.value;
-      element.value = value.substring(0, start) + char + value.substring(end);
-      element.selectionStart = element.selectionEnd = start + 1;
-    } else if (element.contentEditable === 'true') {
-      const selection = window.getSelection();
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(document.createTextNode(char));
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    
-    element.dispatchEvent(inputEvent);
-    element.dispatchEvent(keyupEvent);
-  }
-
-  getKeyCode(char) {
-    // Map characters to key codes for more realistic events
-    const keyMap = {
-      ' ': 'Space',
-      '\n': 'Enter',
-      '\t': 'Tab'
-    };
-    
-    if (keyMap[char]) {
-      return keyMap[char];
-    }
-    
-    if (char.match(/[a-zA-Z]/)) {
-      return 'Key' + char.toUpperCase();
-    }
-    
-    if (char.match(/[0-9]/)) {
-      return 'Digit' + char;
-    }
-    
-    return 'Unidentified';
   }
 
   getRandomDelay() {
