@@ -674,13 +674,33 @@ class PasteTyper {
     
     // Try multiple strategies to find the element to clear
     let elementToClear = null;
-    
+    let fromAdapter = false;
+
+    // Strategy 0: Ask the active adapter to resolve the target. Site-specific
+    // adapters (e.g. Google Docs) locate editors that the generic DOM queries
+    // below cannot find.
+    const adapter = this.currentAdapter ||
+      (typeof adapterManager !== 'undefined' && adapterManager ? adapterManager.getAdapter() : null);
+    if (adapter) {
+      try {
+        const targetResult = await adapter.getTarget(true);
+        if (targetResult && targetResult.element) {
+          elementToClear = targetResult.element;
+          fromAdapter = true;
+          this.currentAdapter = adapter;
+          debug.log('Using adapter-resolved target:', elementToClear);
+        }
+      } catch (e) {
+        debug.warn('Adapter getTarget failed during reset:', e);
+      }
+    }
+
     // Strategy 1: Use the stored target element
-    if (this.targetElement && this.isEditableElement(this.targetElement)) {
+    if (!elementToClear && this.targetElement && this.isEditableElement(this.targetElement)) {
       elementToClear = this.targetElement;
       debug.log('Using stored target element:', elementToClear);
     }
-    
+
     // Strategy 2: Use the currently active element
     if (!elementToClear) {
       const activeElement = document.activeElement;
@@ -689,14 +709,14 @@ class PasteTyper {
         debug.log('Using active element:', elementToClear);
       }
     }
-    
+
     // Strategy 3: Find the best editable element
     if (!elementToClear) {
       elementToClear = this.findBestEditableElement();
       debug.log('Using best editable element:', elementToClear);
     }
-    
-    if (elementToClear && this.isEditableElement(elementToClear)) {
+
+    if (elementToClear && (fromAdapter || this.isEditableElement(elementToClear))) {
       // Check if this is a Monaco editor or similar complex editor
       const isMonacoEditor = this.isMonacoEditor(elementToClear);
       debug.log('Is Monaco editor:', isMonacoEditor);
