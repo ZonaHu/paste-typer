@@ -95,7 +95,7 @@ class StandardInputAdapter extends InputAdapter {
       const start = element.selectionStart;
       const end = element.selectionEnd;
       const value = element.value;
-      element.value = value.substring(0, start) + char + value.substring(end);
+      this._setNativeValue(element, value.substring(0, start) + char + value.substring(end));
       element.selectionStart = element.selectionEnd = start + 1;
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
@@ -142,10 +142,10 @@ class StandardInputAdapter extends InputAdapter {
         const end = element.selectionEnd;
         
         if (start === end && start > 0) {
-          element.value = currentValue.substring(0, start - 1) + currentValue.substring(start);
+          this._setNativeValue(element, currentValue.substring(0, start - 1) + currentValue.substring(start));
           element.selectionStart = element.selectionEnd = start - 1;
         } else if (start !== end) {
-          element.value = currentValue.substring(0, start) + currentValue.substring(end);
+          this._setNativeValue(element, currentValue.substring(0, start) + currentValue.substring(end));
           element.selectionStart = element.selectionEnd = start;
         }
       }
@@ -227,6 +227,25 @@ class StandardInputAdapter extends InputAdapter {
     }
     
     return { success: false, error: '不支持的元素类型' };
+  }
+
+  /**
+   * 通过原型上的原生 value setter 写入值。
+   *
+   * React/Vue 会在 input 实例上覆写 value setter 并用 _valueTracker 跟踪值。
+   * 直接 `element.value =` 会绕过框架跟踪器，导致 onChange 不触发、状态不同步。
+   * 调用原生原型 setter 可让跟踪器在随后的 input 事件中检测到变化。
+   */
+  _setNativeValue(element, value) {
+    const proto = element.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(element, value);
+    } else {
+      element.value = value;
+    }
   }
 
   /**
