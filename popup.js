@@ -57,7 +57,7 @@ class PopupController {
   setupEventListeners() {
     this.speedSlider.addEventListener('input', () => {
       const speed = this.speedSlider.value;
-      this.speedValue.textContent = `${speed}ms per character`;
+      this.speedValue.textContent = `${speed}ms`;
       this.saveSettings();
     });
 
@@ -211,7 +211,7 @@ class PopupController {
       this.showStatus('⏹️ Typing stopped', 'info');
       this.startButton.disabled = false;
       this.pauseButton.textContent = '⏸️ Pause';
-      this.pauseButton.style.backgroundColor = '#FFC107';
+      this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
     } catch (error) {
       this.showStatus('❌ Error stopping: ' + error.message, 'error');
@@ -227,13 +227,13 @@ class PopupController {
         await this.sendMessageToTab({ action: 'resumeTyping' });
         this.showStatus('▶️ Typing resumed', 'info');
         this.pauseButton.textContent = '⏸️ Pause';
-        this.pauseButton.style.backgroundColor = '#FFC107';
+        this.pauseButton.style.backgroundColor = '#f59e0b';
       } else {
         // Currently typing, so pause
         await this.sendMessageToTab({ action: 'pauseTyping' });
         this.showStatus('⏸️ Typing paused', 'info');
         this.pauseButton.textContent = '▶️ Resume';
-        this.pauseButton.style.backgroundColor = '#28A745';
+        this.pauseButton.style.backgroundColor = '#16a34a';
       }
     } catch (error) {
       this.showStatus('❌ Error toggling pause: ' + error.message, 'error');
@@ -246,7 +246,7 @@ class PopupController {
       this.showStatus('🔄 Input field cleared and typing reset', 'info');
       this.startButton.disabled = false;
       this.pauseButton.textContent = '⏸️ Pause';
-      this.pauseButton.style.backgroundColor = '#FFC107';
+      this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
     } catch (error) {
       this.showStatus('❌ Error resetting: ' + error.message, 'error');
@@ -271,9 +271,9 @@ class PopupController {
           this.progressText.textContent = `${position} / ${total}`;
           
           if (isPaused) {
-            this.progressBar.style.backgroundColor = '#FFC107';
+            this.progressBar.style.backgroundColor = '#f59e0b';
           } else {
-            this.progressBar.style.backgroundColor = '#4CAF50';
+            this.progressBar.style.backgroundColor = '';
           }
         }
       } catch (error) {
@@ -307,8 +307,10 @@ class PopupController {
       if (response && response.success && response.count > 0) {
         this.isNavigationMode = true;
         this.navigationControls.style.display = 'block';
-        this.findInputsButton.textContent = '❌ Exit Navigation';
-        this.findInputsButton.style.backgroundColor = '#f44336';
+        this.findInputsButton.textContent = '✕ Exit Navigation';
+        this.findInputsButton.style.backgroundColor = '#ef4444';
+        this.findInputsButton.style.color = '#fff';
+        this.findInputsButton.style.borderColor = '#ef4444';
         
         this.updateNavigationStatus(1, response.count);
         this.showStatus(`✅ Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
@@ -363,8 +365,10 @@ class PopupController {
       await this.sendMessageToTab({ action: 'stopInputNavigation' });
       this.isNavigationMode = false;
       this.navigationControls.style.display = 'none';
-      this.findInputsButton.textContent = '🔍 Navigate Inputs';
-      this.findInputsButton.style.backgroundColor = '#FF9800';
+      this.findInputsButton.textContent = '🎯 Navigate';
+      this.findInputsButton.style.backgroundColor = '';
+      this.findInputsButton.style.color = '';
+      this.findInputsButton.style.borderColor = '';
       this.showStatus('Navigation mode exited', 'info');
     } catch (error) {
       console.error('Exit navigation error:', error);
@@ -521,7 +525,7 @@ class PopupController {
         
         if (settings.speed) {
           this.speedSlider.value = settings.speed;
-          this.speedValue.textContent = `${settings.speed}ms per character`;
+          this.speedValue.textContent = `${settings.speed}ms`;
         }
         
         if (this.typoChanceSlider) {
