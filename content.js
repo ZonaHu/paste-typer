@@ -832,11 +832,11 @@ class PasteTyper {
     
     // Actually clear the content
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      element.value = '';
+      this._setNativeValue(element, '');
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       element.textContent = '';
     }
-    
+
     // Dispatch input event
     const inputEvent = new Event('input', { bubbles: true, cancelable: true });
     element.dispatchEvent(inputEvent);
@@ -885,7 +885,7 @@ class PasteTyper {
       if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
         const currentValue = element.value;
         if (currentValue.length > 0) {
-          element.value = currentValue.slice(0, -1);
+          this._setNativeValue(element, currentValue.slice(0, -1));
           element.setSelectionRange(element.value.length, element.value.length);
         }
       } else if (element.contentEditable === 'true' || element.isContentEditable) {
@@ -1383,8 +1383,8 @@ class PasteTyper {
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       // Set selection to entire content
       element.setSelectionRange(0, element.value.length);
-      // Clear value directly
-      element.value = '';
+      // Clear value via native setter (React/Vue safe)
+      this._setNativeValue(element, '');
       // Set cursor to beginning
       element.setSelectionRange(0, 0);
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
@@ -1675,6 +1675,20 @@ class PasteTyper {
     indicator.textContent = `Input ${current}/${total} • Use ←→ arrows to navigate • Enter to select • Esc to exit`;
   }
 
+  // 通过原型上的原生 value setter 写入值，避免绕过 React/Vue 的 _valueTracker
+  // 导致清空后状态不同步。详见 StandardInputAdapter._setNativeValue。
+  _setNativeValue(element, value) {
+    const proto = element.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(element, value);
+    } else {
+      element.value = value;
+    }
+  }
+
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -1683,32 +1697,45 @@ class PasteTyper {
 // Initialize the paste typer
 const pasteTyper = new PasteTyper();
 
-// Add visual indicator when extension is active
-const indicator = document.createElement('div');
-indicator.id = 'paste-typer-indicator';
-indicator.style.cssText = `
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  z-index: 10000;
-  background: #4CAF50;
-  color: white;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-family: Arial, sans-serif;
-  font-size: 12px;
-  display: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-`;
-indicator.textContent = 'Paste Typer Active';
-document.body.appendChild(indicator);
+// Visual "active" indicator, created lazily on first typing so we don't inject
+// a DOM node into every page the user visits.
+let indicator = null;
+let indicatorHideTimer = null;
+
+function showActiveIndicator() {
+  if (!document.body) return;
+
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'paste-typer-indicator';
+    indicator.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 10000;
+      background: #4CAF50;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      display: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    `;
+    indicator.textContent = 'Paste Typer Active';
+    document.body.appendChild(indicator);
+  }
+
+  indicator.style.display = 'block';
+  clearTimeout(indicatorHideTimer);
+  indicatorHideTimer = setTimeout(() => {
+    indicator.style.display = 'none';
+  }, 3000);
+}
 
 // Show indicator when typing starts
 chrome.runtime.onMessage.addListener((request) => {
   if (request.action === 'startTyping') {
-    indicator.style.display = 'block';
-    setTimeout(() => {
-      indicator.style.display = 'none';
-    }, 3000);
+    showActiveIndicator();
   }
 });
