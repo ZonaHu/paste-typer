@@ -49,9 +49,9 @@ class PasteTyper {
       try {
         if (action === 'startTyping') {
           if (payload.typoChance !== undefined) this.typoChance = payload.typoChance;
-          this.startTyping(payload.text, payload.targetElement).catch((err) => {
-            console.error('[PasteTyper] startTyping error:', err);
-          });
+          // Await the start so a missing target rejects to the outer catch and
+          // replies success:false, rather than reporting a false success.
+          await this.startTyping(payload.text, payload.targetElement);
           reply({ success: true });
         } else if (action === 'stopTyping') {
           this.stopTyping();
@@ -89,8 +89,12 @@ class PasteTyper {
         if (request.typoChance !== undefined) {
           this.typoChance = request.typoChance;
         }
-        this.startTyping(request.text, request.targetElement);
-        sendResponse({success: true});
+        // startTyping resolves once typing has started (target found, focused,
+        // cleared); report the real outcome so the popup can show "no input
+        // field found" instead of a false success.
+        this.startTyping(request.text, request.targetElement)
+          .then(() => sendResponse({success: true}))
+          .catch((error) => sendResponse({success: false, error: error.message}));
       } else if (request.action === 'stopTyping') {
         this.stopTyping();
         sendResponse({success: true});

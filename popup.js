@@ -176,7 +176,12 @@ class PopupController {
           this.startButton.disabled = false;
         }, 2000);
       } else {
-        this.showStatus('Failed to start typing', 'error');
+        const err = (response && response.error) || '';
+        if (err.includes('No editable input field') || err.includes('未找到') || err.includes('编辑器')) {
+          this.showStatus('No input field found. Click on the document first!', 'error');
+        } else {
+          this.showStatus('Failed to start typing' + (err ? ': ' + err : ''), 'error');
+        }
         this.startButton.disabled = false;
       }
     } catch (error) {
