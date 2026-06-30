@@ -33,11 +33,13 @@ It is not synced to your Google account and not sent to the developer.
 
 ## Permissions and why they exist
 
-- `activeTab` — send a message to the focused tab when you invoke the extension.
+- `activeTab` — grants temporary access to the focused tab only when you invoke the extension.
 - `storage` — persist the settings listed above.
 - `contextMenus` — add the right-click "Paste as typed text" menu item on editable fields.
-- `scripting` — re-inject the content script if the page loaded before the extension did.
-- `host_permissions: <all_urls>` — run the content script on whichever site you choose to use it on.
+- `scripting` — inject the content script into the active tab on demand when you invoke the extension.
+
+The extension requests no broad host permissions, so it cannot access any site
+until you explicitly invoke it on that tab.
 
 ## Third parties
 

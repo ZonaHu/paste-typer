@@ -6,6 +6,16 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
   };
 }
 
+// Content script files, in dependency order. Injected on demand (the extension
+// uses activeTab, not an <all_urls> auto-registered content script).
+const CONTENT_FILES = [
+  'content/inputAdapter.js',
+  'content/googleDocsAdapter.js',
+  'content/standardInputAdapter.js',
+  'content/adapterManager.js',
+  'content.js'
+];
+
 class BackgroundService {
   constructor() {
     this.setupContextMenu();
@@ -26,17 +36,29 @@ class BackgroundService {
         try {
           const clipboardText = await this.readClipboard();
           if (clipboardText) {
-            chrome.tabs.sendMessage(tab.id, {
+            await this.sendToTabWithInjection(tab.id, {
               action: 'startTyping',
               text: clipboardText,
               targetElement: true
             });
           }
         } catch (error) {
-          console.error('Failed to read clipboard:', error);
+          console.error('Failed to start typing from context menu:', error);
         }
       }
     });
+  }
+
+  // Send a message to the tab, injecting the content script first if it isn't
+  // there yet. Sending first acts as the presence check, so we never inject
+  // twice (re-injecting would re-declare the shared content-script classes).
+  async sendToTabWithInjection(tabId, message) {
+    try {
+      return await chrome.tabs.sendMessage(tabId, message);
+    } catch (e) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_FILES });
+      return await chrome.tabs.sendMessage(tabId, message);
+    }
   }
 
   setupMessageHandlers() {

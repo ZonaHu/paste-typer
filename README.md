@@ -58,7 +58,8 @@ Useful for fields that don't accept paste, for accessibility, and for data-entry
 
 ## How It Works
 
-1. Content script injects on every page
+1. Content script is injected into the active tab on demand, only when you
+   invoke the extension (popup, right-click menu, or floating UI)
 2. Adapter manager selects an input adapter for the current site
 3. Adapter focuses the target field and types one character at a time
 4. Each character dispatches the proper `keydown` / `keypress` / `input` / `keyup` events
@@ -72,11 +73,14 @@ Useful for fields that don't accept paste, for accessibility, and for data-entry
 
 ## Permissions
 
-- `activeTab` - Send messages to the focused tab when the user invokes the extension
+- `activeTab` - Grants access to the focused tab only when you invoke the extension
 - `storage` - Save user preferences (text, speed, typo rate, floating UI position)
 - `contextMenus` - "Paste as typed text" right-click menu on editable fields
-- `scripting` - Re-inject the content script if the page loaded before the extension did
-- `host_permissions: <all_urls>` - Run the content script on any site the user visits
+- `scripting` - Inject the content script into the active tab on demand
+
+The extension requests no broad host permissions. It cannot read or run on any
+site until you explicitly invoke it on that tab, at which point `activeTab`
+grants temporary access to that one tab.
 
 The extension does NOT request `clipboardRead`. The popup and floating UI read the
 clipboard via `navigator.clipboard.readText()` on user gesture.

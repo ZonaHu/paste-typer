@@ -6,6 +6,16 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
   };
 }
 
+// Content script files, in dependency order. Injected on demand since the
+// extension uses activeTab rather than an <all_urls> auto content script.
+const CONTENT_FILES = [
+  'content/inputAdapter.js',
+  'content/googleDocsAdapter.js',
+  'content/standardInputAdapter.js',
+  'content/adapterManager.js',
+  'content.js'
+];
+
 class PopupController {
   constructor() {
     this.textInput = document.getElementById('textInput');
@@ -36,7 +46,8 @@ class PopupController {
     
     this.progressInterval = null;
     this.isNavigationMode = false;
-    
+    this._injectPromise = null; // dedupes concurrent on-demand injections
+
     this.setupEventListeners();
     this.loadSettings();
     this.checkCurrentTab();
@@ -437,6 +448,19 @@ class PopupController {
     });
   }
 
+  // Inject the content script once per popup session. Concurrent callers share
+  // the same promise so the script is never injected twice (re-injection would
+  // re-declare the shared content-script classes and throw).
+  _ensureInjected(tabId) {
+    if (!this._injectPromise) {
+      this._injectPromise = chrome.scripting.executeScript({
+        target: { tabId },
+        files: CONTENT_FILES
+      });
+    }
+    return this._injectPromise;
+  }
+
   async sendMessageToTab(message) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
@@ -446,40 +470,22 @@ class PopupController {
     if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('moz-extension://')) {
       throw new Error('Extension cannot run on this page. Please navigate to a regular website.');
     }
-    
-    return new Promise(async (resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, message, async (response) => {
-        if (chrome.runtime.lastError) {
-          const error = chrome.runtime.lastError.message;
-          if (error.includes('Could not establish connection') || error.includes('Receiving end does not exist')) {
-            try {
-              // Try to inject the content script manually
-              await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                files: ['content.js']
-              });
-              
-              // Wait a bit for the script to initialize
-              setTimeout(() => {
-                chrome.tabs.sendMessage(tab.id, message, (retryResponse) => {
-                  if (chrome.runtime.lastError) {
-                    reject(new Error('Content script injection failed. Please refresh the page and try again.'));
-                  } else {
-                    resolve(retryResponse);
-                  }
-                });
-              }, 500);
-            } catch (injectionError) {
-              reject(new Error('Content script not loaded. Please refresh the page and try again.'));
-            }
-          } else {
-            reject(new Error(error));
-          }
-        } else {
-          resolve(response);
-        }
-      });
-    });
+
+    try {
+      return await chrome.tabs.sendMessage(tab.id, message);
+    } catch (e) {
+      const msg = (e && e.message) || '';
+      if (!msg.includes('Could not establish connection') && !msg.includes('Receiving end does not exist')) {
+        throw e;
+      }
+      // Content script not present yet — inject it and retry once.
+      try {
+        await this._ensureInjected(tab.id);
+      } catch (injectionError) {
+        throw new Error('Content script not loaded. Please refresh the page and try again.');
+      }
+      return await chrome.tabs.sendMessage(tab.id, message);
+    }
   }
 
   showStatus(message, type) {
@@ -539,16 +545,9 @@ class PopupController {
 
   async openFloatingUI() {
     try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      const url = (tab && tab.url) || '';
-
-      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
-        this.showStatus('Cannot open floating UI on this page', 'error');
-        return;
-      }
-      
-      await chrome.tabs.sendMessage(tab.id, { action: 'toggleFloatingUI' });
+      // Routes through sendMessageToTab so the content script is injected on
+      // demand if it isn't already present.
+      await this.sendMessageToTab({ action: 'toggleFloatingUI' });
       this.showStatus('Floating UI opened', 'success');
       window.close(); // Close popup
     } catch (error) {
