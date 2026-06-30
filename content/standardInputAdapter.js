@@ -51,16 +51,22 @@ class StandardInputAdapter extends InputAdapter {
       return { success: false, error: '目标元素无效' };
     }
 
+    const keyInfo = this._getKeyInfo(char);
+
     const keydownEvent = new KeyboardEvent('keydown', {
       key: char,
-      code: this._getKeyCode(char),
+      code: keyInfo.code,
+      keyCode: keyInfo.keyCode,
+      which: keyInfo.keyCode,
       bubbles: true,
       cancelable: true
     });
 
     const keypressEvent = new KeyboardEvent('keypress', {
       key: char,
-      code: this._getKeyCode(char),
+      code: keyInfo.code,
+      keyCode: keyInfo.charCode,
+      which: keyInfo.charCode,
       bubbles: true,
       cancelable: true
     });
@@ -74,7 +80,9 @@ class StandardInputAdapter extends InputAdapter {
 
     const keyupEvent = new KeyboardEvent('keyup', {
       key: char,
-      code: this._getKeyCode(char),
+      code: keyInfo.code,
+      keyCode: keyInfo.keyCode,
+      which: keyInfo.keyCode,
       bubbles: true,
       cancelable: true
     });
@@ -260,13 +268,53 @@ class StandardInputAdapter extends InputAdapter {
   }
 
   /**
-   * 获取字符的 keyCode
+   * 获取字符的按键信息：DOM `code`、传统 `keyCode`（虚拟键码）与 `charCode`。
+   * keyCode 用于 keydown/keyup，charCode 用于 keypress。
    */
-  _getKeyCode(char) {
-    if (char.length === 0) return 'Space';
-    if (char === ' ') return 'Space';
-    if (char === '\n') return 'Enter';
-    return `Key${char.toUpperCase()}`;
+  _getKeyInfo(char) {
+    const charCode = char.length ? char.codePointAt(0) : 32;
+
+    // 特殊键
+    if (char === ' ' || char.length === 0) return { code: 'Space', keyCode: 32, charCode: 32 };
+    if (char === '\n' || char === '\r') return { code: 'Enter', keyCode: 13, charCode: 13 };
+    if (char === '\t') return { code: 'Tab', keyCode: 9, charCode: 9 };
+
+    // 字母
+    if (/[a-zA-Z]/.test(char)) {
+      const upper = char.toUpperCase();
+      return { code: `Key${upper}`, keyCode: upper.charCodeAt(0), charCode };
+    }
+
+    // 数字
+    if (/[0-9]/.test(char)) {
+      return { code: `Digit${char}`, keyCode: char.charCodeAt(0), charCode };
+    }
+
+    // 常见标点，映射到对应的物理键 code 与传统 keyCode
+    const punct = {
+      ';': { code: 'Semicolon', keyCode: 186 }, ':': { code: 'Semicolon', keyCode: 186 },
+      '=': { code: 'Equal', keyCode: 187 }, '+': { code: 'Equal', keyCode: 187 },
+      ',': { code: 'Comma', keyCode: 188 }, '<': { code: 'Comma', keyCode: 188 },
+      '-': { code: 'Minus', keyCode: 189 }, '_': { code: 'Minus', keyCode: 189 },
+      '.': { code: 'Period', keyCode: 190 }, '>': { code: 'Period', keyCode: 190 },
+      '/': { code: 'Slash', keyCode: 191 }, '?': { code: 'Slash', keyCode: 191 },
+      '`': { code: 'Backquote', keyCode: 192 }, '~': { code: 'Backquote', keyCode: 192 },
+      '[': { code: 'BracketLeft', keyCode: 219 }, '{': { code: 'BracketLeft', keyCode: 219 },
+      '\\': { code: 'Backslash', keyCode: 220 }, '|': { code: 'Backslash', keyCode: 220 },
+      ']': { code: 'BracketRight', keyCode: 221 }, '}': { code: 'BracketRight', keyCode: 221 },
+      "'": { code: 'Quote', keyCode: 222 }, '"': { code: 'Quote', keyCode: 222 },
+      ')': { code: 'Digit0', keyCode: 48 }, '!': { code: 'Digit1', keyCode: 49 },
+      '@': { code: 'Digit2', keyCode: 50 }, '#': { code: 'Digit3', keyCode: 51 },
+      '$': { code: 'Digit4', keyCode: 52 }, '%': { code: 'Digit5', keyCode: 53 },
+      '^': { code: 'Digit6', keyCode: 54 }, '&': { code: 'Digit7', keyCode: 55 },
+      '*': { code: 'Digit8', keyCode: 56 }, '(': { code: 'Digit9', keyCode: 57 }
+    };
+    if (punct[char]) {
+      return { code: punct[char].code, keyCode: punct[char].keyCode, charCode };
+    }
+
+    // 其他（含 Unicode）：无物理键 code，keyCode 退回到码点
+    return { code: 'Unidentified', keyCode: charCode, charCode };
   }
 }
 
