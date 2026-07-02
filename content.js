@@ -49,9 +49,9 @@ class PasteTyper {
       try {
         if (action === 'startTyping') {
           if (payload.typoChance !== undefined) this.typoChance = payload.typoChance;
-          this.startTyping(payload.text, payload.targetElement).catch((err) => {
-            console.error('[PasteTyper] startTyping error:', err);
-          });
+          // Await the start so a missing target rejects to the outer catch and
+          // replies success:false, rather than reporting a false success.
+          await this.startTyping(payload.text, payload.targetElement);
           reply({ success: true });
         } else if (action === 'stopTyping') {
           this.stopTyping();
@@ -89,8 +89,12 @@ class PasteTyper {
         if (request.typoChance !== undefined) {
           this.typoChance = request.typoChance;
         }
-        this.startTyping(request.text, request.targetElement);
-        sendResponse({success: true});
+        // startTyping resolves once typing has started (target found, focused,
+        // cleared); report the real outcome so the popup can show "no input
+        // field found" instead of a false success.
+        this.startTyping(request.text, request.targetElement)
+          .then(() => sendResponse({success: true}))
+          .catch((error) => sendResponse({success: false, error: error.message}));
       } else if (request.action === 'stopTyping') {
         this.stopTyping();
         sendResponse({success: true});
@@ -108,13 +112,17 @@ class PasteTyper {
         });
       } else if (request.action === 'getActiveElement') {
         const element = document.activeElement;
-        sendResponse({
-          tagName: element.tagName,
-          type: element.type,
-          id: element.id,
-          className: element.className,
-          isEditable: this.isEditableElement(element)
-        });
+        if (!element) {
+          sendResponse({ tagName: '', type: '', id: '', className: '', isEditable: false });
+        } else {
+          sendResponse({
+            tagName: element.tagName,
+            type: element.type,
+            id: element.id,
+            className: element.className,
+            isEditable: this.isEditableElement(element)
+          });
+        }
       } else if (request.action === 'findAndHighlightInputs') {
         const count = this.findAndHighlightInputs();
         sendResponse({count: count});
@@ -434,41 +442,9 @@ class PasteTyper {
         this.isTyping = false;
         throw error; // 重新抛出错误，让 popup 知道失败了
       }
-    }
-
-    // 原有逻辑（向后兼容）
-    let targetElement;
-    if (useActiveElement) {
-      targetElement = document.activeElement;
-      if (!this.isEditableElement(targetElement)) {
-        targetElement = this.findBestEditableElement();
-      }
     } else {
-      targetElement = this.findBestEditableElement();
+      throw new Error('Adapter manager not available');
     }
-
-    if (!targetElement || !this.isEditableElement(targetElement)) {
-      throw new Error('No editable input field found on this page');
-    }
-
-    this.isTyping = true;
-    this.isPaused = false;
-    this.currentText = text;
-    this.currentPosition = 0;
-    this.targetElement = targetElement;
-    
-    // Focus the element
-    targetElement.focus();
-    
-    // Clear existing content if it's an input/textarea
-    if (targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA') {
-      targetElement.value = '';
-    } else if (targetElement.contentEditable === 'true') {
-      targetElement.textContent = '';
-    }
-
-    // Start typing character by character
-    await this.continueTyping();
   }
 
   async continueTyping() {
@@ -505,15 +481,11 @@ class PasteTyper {
           await this.sleep(this.pauseDuration);
         }
         
-        // Type the character using adapter or legacy method
-        if (this.currentAdapter) {
-          const result = await this.currentAdapter.typeCharacter(this.targetElement, char);
-          if (!result.success) {
-            debug.warn('[PasteTyper] Failed to type character:', char, result.error);
-            // 继续尝试下一个字符，不中断整个流程
-          }
-        } else {
-          await this.typeCharacter(this.targetElement, char);
+        // Type the character using the adapter
+        const result = await this.currentAdapter.typeCharacter(this.targetElement, char);
+        if (!result.success) {
+          debug.warn('[PasteTyper] Failed to type character:', char, result.error);
+          // 继续尝试下一个字符，不中断整个流程
         }
         this.currentPosition++;
       }
@@ -549,42 +521,26 @@ class PasteTyper {
     
     if (!typoChar) {
       // If we can't generate a typo, just type the character normally
-      if (this.currentAdapter) {
-        await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
-      } else {
-        await this.typeCharacter(this.targetElement, correctChar);
-      }
+      await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
       this.currentPosition++;
       return;
     }
-    
+
     // Type the typo character
-    if (this.currentAdapter) {
-      await this.currentAdapter.typeCharacter(this.targetElement, typoChar);
-    } else {
-      await this.typeCharacter(this.targetElement, typoChar);
-    }
-    
+    await this.currentAdapter.typeCharacter(this.targetElement, typoChar);
+
     // Wait a bit (human realizes the mistake)
     await this.sleep(this.typoCorrectionDelay);
-    
+
     // Delete the typo (backspace)
-    if (this.currentAdapter) {
-      await this.currentAdapter.simulateBackspace(this.targetElement);
-    } else {
-      await this.simulateBackspace(this.targetElement);
-    }
-    
+    await this.currentAdapter.simulateBackspace(this.targetElement);
+
     // Small pause before typing correct character
     await this.sleep(50 + Math.random() * 50);
-    
+
     // Type the correct character
-    if (this.currentAdapter) {
-      await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
-    } else {
-      await this.typeCharacter(this.targetElement, correctChar);
-    }
-    
+    await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
+
     // Move position forward
     this.currentPosition++;
   }
@@ -614,124 +570,6 @@ class PasteTyper {
     }
     
     return null;
-  }
-
-  async simulateBackspace(element) {
-    // Legacy backspace simulation
-    const backspaceDown = new KeyboardEvent('keydown', {
-      key: 'Backspace',
-      code: 'Backspace',
-      keyCode: 8,
-      bubbles: true,
-      cancelable: true
-    });
-    
-    element.dispatchEvent(backspaceDown);
-    
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const currentValue = element.value;
-      if (currentValue.length > 0) {
-        const start = element.selectionStart;
-        element.value = currentValue.substring(0, start - 1) + currentValue.substring(start);
-        element.selectionStart = element.selectionEnd = start - 1;
-      }
-    } else if (element.contentEditable === 'true' || element.isContentEditable) {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        if (range.startOffset > 0) {
-          range.setStart(range.startContainer, range.startOffset - 1);
-          range.deleteContents();
-        }
-      }
-    }
-    
-    const inputEvent = new InputEvent('input', {
-      inputType: 'deleteContentBackward',
-      bubbles: true,
-      cancelable: false
-    });
-    element.dispatchEvent(inputEvent);
-    
-    await this.sleep(10);
-  }
-
-  async typeCharacter(element, char) {
-    // Create and dispatch keyboard events
-    const keydownEvent = new KeyboardEvent('keydown', {
-      key: char,
-      code: this.getKeyCode(char),
-      bubbles: true,
-      cancelable: true
-    });
-    
-    const keypressEvent = new KeyboardEvent('keypress', {
-      key: char,
-      code: this.getKeyCode(char),
-      bubbles: true,
-      cancelable: true
-    });
-    
-    const inputEvent = new InputEvent('input', {
-      data: char,
-      inputType: 'insertText',
-      bubbles: true,
-      cancelable: true
-    });
-    
-    const keyupEvent = new KeyboardEvent('keyup', {
-      key: char,
-      code: this.getKeyCode(char),
-      bubbles: true,
-      cancelable: true
-    });
-
-    // Dispatch events in order
-    element.dispatchEvent(keydownEvent);
-    element.dispatchEvent(keypressEvent);
-    
-    // Actually insert the character
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
-      const value = element.value;
-      element.value = value.substring(0, start) + char + value.substring(end);
-      element.selectionStart = element.selectionEnd = start + 1;
-    } else if (element.contentEditable === 'true') {
-      const selection = window.getSelection();
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(document.createTextNode(char));
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    
-    element.dispatchEvent(inputEvent);
-    element.dispatchEvent(keyupEvent);
-  }
-
-  getKeyCode(char) {
-    // Map characters to key codes for more realistic events
-    const keyMap = {
-      ' ': 'Space',
-      '\n': 'Enter',
-      '\t': 'Tab'
-    };
-    
-    if (keyMap[char]) {
-      return keyMap[char];
-    }
-    
-    if (char.match(/[a-zA-Z]/)) {
-      return 'Key' + char.toUpperCase();
-    }
-    
-    if (char.match(/[0-9]/)) {
-      return 'Digit' + char;
-    }
-    
-    return 'Unidentified';
   }
 
   getRandomDelay() {
@@ -844,13 +682,33 @@ class PasteTyper {
     
     // Try multiple strategies to find the element to clear
     let elementToClear = null;
-    
+    let fromAdapter = false;
+
+    // Strategy 0: Ask the active adapter to resolve the target. Site-specific
+    // adapters (e.g. Google Docs) locate editors that the generic DOM queries
+    // below cannot find.
+    const adapter = this.currentAdapter ||
+      (typeof adapterManager !== 'undefined' && adapterManager ? adapterManager.getAdapter() : null);
+    if (adapter) {
+      try {
+        const targetResult = await adapter.getTarget(true);
+        if (targetResult && targetResult.element) {
+          elementToClear = targetResult.element;
+          fromAdapter = true;
+          this.currentAdapter = adapter;
+          debug.log('Using adapter-resolved target:', elementToClear);
+        }
+      } catch (e) {
+        debug.warn('Adapter getTarget failed during reset:', e);
+      }
+    }
+
     // Strategy 1: Use the stored target element
-    if (this.targetElement && this.isEditableElement(this.targetElement)) {
+    if (!elementToClear && this.targetElement && this.isEditableElement(this.targetElement)) {
       elementToClear = this.targetElement;
       debug.log('Using stored target element:', elementToClear);
     }
-    
+
     // Strategy 2: Use the currently active element
     if (!elementToClear) {
       const activeElement = document.activeElement;
@@ -859,14 +717,14 @@ class PasteTyper {
         debug.log('Using active element:', elementToClear);
       }
     }
-    
+
     // Strategy 3: Find the best editable element
     if (!elementToClear) {
       elementToClear = this.findBestEditableElement();
       debug.log('Using best editable element:', elementToClear);
     }
-    
-    if (elementToClear && this.isEditableElement(elementToClear)) {
+
+    if (elementToClear && (fromAdapter || this.isEditableElement(elementToClear))) {
       // Check if this is a Monaco editor or similar complex editor
       const isMonacoEditor = this.isMonacoEditor(elementToClear);
       debug.log('Is Monaco editor:', isMonacoEditor);
@@ -982,11 +840,11 @@ class PasteTyper {
     
     // Actually clear the content
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      element.value = '';
+      this._setNativeValue(element, '');
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       element.textContent = '';
     }
-    
+
     // Dispatch input event
     const inputEvent = new Event('input', { bubbles: true, cancelable: true });
     element.dispatchEvent(inputEvent);
@@ -1035,7 +893,7 @@ class PasteTyper {
       if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
         const currentValue = element.value;
         if (currentValue.length > 0) {
-          element.value = currentValue.slice(0, -1);
+          this._setNativeValue(element, currentValue.slice(0, -1));
           element.setSelectionRange(element.value.length, element.value.length);
         }
       } else if (element.contentEditable === 'true' || element.isContentEditable) {
@@ -1533,8 +1391,8 @@ class PasteTyper {
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       // Set selection to entire content
       element.setSelectionRange(0, element.value.length);
-      // Clear value directly
-      element.value = '';
+      // Clear value via native setter (React/Vue safe)
+      this._setNativeValue(element, '');
       // Set cursor to beginning
       element.setSelectionRange(0, 0);
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
@@ -1822,7 +1680,21 @@ class PasteTyper {
     
     const current = this.selectedInputIndex + 1;
     const total = this.availableInputs.length;
-    indicator.textContent = `Input ${current}/${total} • Use ←→ arrows to navigate • Enter to select • Esc to exit`;
+    indicator.textContent = `Input ${current}/${total}  ·  Left/Right arrows to navigate  ·  Enter to select  ·  Esc to exit`;
+  }
+
+  // 通过原型上的原生 value setter 写入值，避免绕过 React/Vue 的 _valueTracker
+  // 导致清空后状态不同步。详见 StandardInputAdapter._setNativeValue。
+  _setNativeValue(element, value) {
+    const proto = element.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(element, value);
+    } else {
+      element.value = value;
+    }
   }
 
   sleep(ms) {
@@ -1833,32 +1705,45 @@ class PasteTyper {
 // Initialize the paste typer
 const pasteTyper = new PasteTyper();
 
-// Add visual indicator when extension is active
-const indicator = document.createElement('div');
-indicator.id = 'paste-typer-indicator';
-indicator.style.cssText = `
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  z-index: 10000;
-  background: #4CAF50;
-  color: white;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-family: Arial, sans-serif;
-  font-size: 12px;
-  display: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-`;
-indicator.textContent = 'Paste Typer Active';
-document.body.appendChild(indicator);
+// Visual "active" indicator, created lazily on first typing so we don't inject
+// a DOM node into every page the user visits.
+let indicator = null;
+let indicatorHideTimer = null;
+
+function showActiveIndicator() {
+  if (!document.body) return;
+
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'paste-typer-indicator';
+    indicator.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 10000;
+      background: #4CAF50;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      display: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    `;
+    indicator.textContent = 'Paste Typer Active';
+    document.body.appendChild(indicator);
+  }
+
+  indicator.style.display = 'block';
+  clearTimeout(indicatorHideTimer);
+  indicatorHideTimer = setTimeout(() => {
+    indicator.style.display = 'none';
+  }, 3000);
+}
 
 // Show indicator when typing starts
 chrome.runtime.onMessage.addListener((request) => {
   if (request.action === 'startTyping') {
-    indicator.style.display = 'block';
-    setTimeout(() => {
-      indicator.style.display = 'none';
-    }, 3000);
+    showActiveIndicator();
   }
 });

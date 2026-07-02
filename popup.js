@@ -6,6 +6,16 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
   };
 }
 
+// Content script files, in dependency order. Injected on demand since the
+// extension uses activeTab rather than an <all_urls> auto content script.
+const CONTENT_FILES = [
+  'content/inputAdapter.js',
+  'content/googleDocsAdapter.js',
+  'content/standardInputAdapter.js',
+  'content/adapterManager.js',
+  'content.js'
+];
+
 class PopupController {
   constructor() {
     this.textInput = document.getElementById('textInput');
@@ -36,7 +46,8 @@ class PopupController {
     
     this.progressInterval = null;
     this.isNavigationMode = false;
-    
+    this._injectPromise = null; // dedupes concurrent on-demand injections
+
     this.setupEventListeners();
     this.loadSettings();
     this.checkCurrentTab();
@@ -46,7 +57,7 @@ class PopupController {
   setupEventListeners() {
     this.speedSlider.addEventListener('input', () => {
       const speed = this.speedSlider.value;
-      this.speedValue.textContent = `${speed}ms per character`;
+      this.speedValue.textContent = `${speed}ms`;
       this.saveSettings();
     });
 
@@ -120,7 +131,7 @@ class PopupController {
         const text = await navigator.clipboard.readText();
         this.textInput.value = text;
         this.saveSettings();
-        this.showStatus('✅ Clipboard text loaded', 'success');
+        this.showStatus('Clipboard text loaded', 'success');
         return;
       } catch (directError) {
         debug.log('Direct clipboard access failed, trying background script...');
@@ -132,12 +143,12 @@ class PopupController {
       if (response.success) {
         this.textInput.value = response.text;
         this.saveSettings();
-        this.showStatus('✅ Clipboard text loaded', 'success');
+        this.showStatus('Clipboard text loaded', 'success');
       } else {
-        this.showStatus('❌ Failed to read clipboard: ' + response.error, 'error');
+        this.showStatus('Failed to read clipboard: ' + response.error, 'error');
       }
     } catch (error) {
-      this.showStatus('❌ Error: ' + error.message, 'error');
+      this.showStatus('Error: ' + error.message, 'error');
     }
   }
 
@@ -145,12 +156,12 @@ class PopupController {
     const text = this.textInput.value.trim();
     
     if (!text) {
-      this.showStatus('❌ Please enter some text to type', 'error');
+      this.showStatus('Please enter some text to type', 'error');
       return;
     }
 
     try {
-      this.showStatus('🔍 Looking for input field...', 'info');
+      this.showStatus('Looking for input field...', 'info');
       this.startButton.disabled = true;
       
       // Get current settings
@@ -176,7 +187,12 @@ class PopupController {
           this.startButton.disabled = false;
         }, 2000);
       } else {
-        this.showStatus('Failed to start typing', 'error');
+        const err = (response && response.error) || '';
+        if (err.includes('No editable input field') || err.includes('未找到') || err.includes('编辑器')) {
+          this.showStatus('No input field found. Click on the document first!', 'error');
+        } else {
+          this.showStatus('Failed to start typing' + (err ? ': ' + err : ''), 'error');
+        }
         this.startButton.disabled = false;
       }
     } catch (error) {
@@ -192,13 +208,13 @@ class PopupController {
   async stopTyping() {
     try {
       await this.sendMessageToTab({ action: 'stopTyping' });
-      this.showStatus('⏹️ Typing stopped', 'info');
+      this.showStatus('Typing stopped', 'info');
       this.startButton.disabled = false;
-      this.pauseButton.textContent = '⏸️ Pause';
-      this.pauseButton.style.backgroundColor = '#FFC107';
+      this.pauseButton.textContent = 'Pause';
+      this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
     } catch (error) {
-      this.showStatus('❌ Error stopping: ' + error.message, 'error');
+      this.showStatus('Error stopping: ' + error.message, 'error');
     }
   }
 
@@ -209,31 +225,31 @@ class PopupController {
       if (isPaused) {
         // Currently paused, so resume
         await this.sendMessageToTab({ action: 'resumeTyping' });
-        this.showStatus('▶️ Typing resumed', 'info');
-        this.pauseButton.textContent = '⏸️ Pause';
-        this.pauseButton.style.backgroundColor = '#FFC107';
+        this.showStatus('Typing resumed', 'info');
+        this.pauseButton.textContent = 'Pause';
+        this.pauseButton.style.backgroundColor = '#f59e0b';
       } else {
         // Currently typing, so pause
         await this.sendMessageToTab({ action: 'pauseTyping' });
-        this.showStatus('⏸️ Typing paused', 'info');
-        this.pauseButton.textContent = '▶️ Resume';
-        this.pauseButton.style.backgroundColor = '#28A745';
+        this.showStatus('Typing paused', 'info');
+        this.pauseButton.textContent = 'Resume';
+        this.pauseButton.style.backgroundColor = '#16a34a';
       }
     } catch (error) {
-      this.showStatus('❌ Error toggling pause: ' + error.message, 'error');
+      this.showStatus('Error toggling pause: ' + error.message, 'error');
     }
   }
 
   async resetTyping() {
     try {
       await this.sendMessageToTab({ action: 'resetTyping' });
-      this.showStatus('🔄 Input field cleared and typing reset', 'info');
+      this.showStatus('Input field cleared and typing reset', 'info');
       this.startButton.disabled = false;
-      this.pauseButton.textContent = '⏸️ Pause';
-      this.pauseButton.style.backgroundColor = '#FFC107';
+      this.pauseButton.textContent = 'Pause';
+      this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
     } catch (error) {
-      this.showStatus('❌ Error resetting: ' + error.message, 'error');
+      this.showStatus('Error resetting: ' + error.message, 'error');
     }
   }
 
@@ -255,9 +271,9 @@ class PopupController {
           this.progressText.textContent = `${position} / ${total}`;
           
           if (isPaused) {
-            this.progressBar.style.backgroundColor = '#FFC107';
+            this.progressBar.style.backgroundColor = '#f59e0b';
           } else {
-            this.progressBar.style.backgroundColor = '#4CAF50';
+            this.progressBar.style.backgroundColor = '';
           }
         }
       } catch (error) {
@@ -284,25 +300,27 @@ class PopupController {
         return;
       }
 
-      this.showStatus('🔍 Starting input navigation mode...', 'info');
+      this.showStatus('Starting input navigation mode...', 'info');
       
       const response = await this.sendMessageToTab({ action: 'startInputNavigation' });
       
       if (response && response.success && response.count > 0) {
         this.isNavigationMode = true;
         this.navigationControls.style.display = 'block';
-        this.findInputsButton.textContent = '❌ Exit Navigation';
-        this.findInputsButton.style.backgroundColor = '#f44336';
+        this.findInputsButton.textContent = 'Exit';
+        this.findInputsButton.style.backgroundColor = '#ef4444';
+        this.findInputsButton.style.color = '#fff';
+        this.findInputsButton.style.borderColor = '#ef4444';
         
         this.updateNavigationStatus(1, response.count);
-        this.showStatus(`✅ Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
+        this.showStatus(`Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
       } else if (response && response.count === 0) {
-        this.showStatus('❌ No input fields found on this page', 'error');
+        this.showStatus('No input fields found on this page', 'error');
       } else {
-        this.showStatus('❌ Failed to start navigation mode', 'error');
+        this.showStatus('Failed to start navigation mode', 'error');
       }
     } catch (error) {
-      this.showStatus('❌ Error starting navigation: ' + error.message, 'error');
+      this.showStatus('Error starting navigation: ' + error.message, 'error');
     }
   }
 
@@ -332,13 +350,13 @@ class PopupController {
     try {
       const response = await this.sendMessageToTab({ action: 'selectCurrentInput' });
       if (response && response.success) {
-        this.showStatus('✅ Input field selected!', 'success');
+        this.showStatus('Input field selected!', 'success');
         await this.exitNavigation();
       } else {
-        this.showStatus('❌ Failed to select input field', 'error');
+        this.showStatus('Failed to select input field', 'error');
       }
     } catch (error) {
-      this.showStatus('❌ Error selecting input: ' + error.message, 'error');
+      this.showStatus('Error selecting input: ' + error.message, 'error');
     }
   }
 
@@ -347,8 +365,10 @@ class PopupController {
       await this.sendMessageToTab({ action: 'stopInputNavigation' });
       this.isNavigationMode = false;
       this.navigationControls.style.display = 'none';
-      this.findInputsButton.textContent = '🔍 Navigate Inputs';
-      this.findInputsButton.style.backgroundColor = '#FF9800';
+      this.findInputsButton.textContent = 'Navigate';
+      this.findInputsButton.style.backgroundColor = '';
+      this.findInputsButton.style.color = '';
+      this.findInputsButton.style.borderColor = '';
       this.showStatus('Navigation mode exited', 'info');
     } catch (error) {
       console.error('Exit navigation error:', error);
@@ -363,9 +383,10 @@ class PopupController {
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
+      const url = (tab && tab.url) || '';
 
-      if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
-        this.elementInfo.textContent = '⚠️ Extension pages not supported. Navigate to a regular website.';
+      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
+        this.elementInfo.textContent = 'Extension pages not supported. Navigate to a regular website.';
         this.elementInfo.style.display = 'block';
         this.startButton.disabled = true;
         this.findInputsButton.disabled = true;
@@ -387,7 +408,7 @@ class PopupController {
     // Clear and rebuild via DOM API — page-derived values go to textContent only.
     this.elementInfo.textContent = '';
     const label = document.createElement('span');
-    label.textContent = isEditable ? '🎯 Active element: ' : '⚠️ Active element: ';
+    label.textContent = isEditable ? 'Active element: ' : 'Active element: ';
     const code = document.createElement('code');
     code.textContent = desc;
     const trailing = document.createElement('span');
@@ -400,7 +421,7 @@ class PopupController {
     if (!isEditable) {
       this.elementInfo.appendChild(document.createElement('br'));
       const hint = document.createElement('small');
-      hint.textContent = '💡 Use "Find Input Fields" to locate text areas';
+      hint.textContent = 'Use "Find Input Fields" to locate text areas';
       this.elementInfo.appendChild(hint);
     }
     this.elementInfo.style.display = 'block';
@@ -413,7 +434,7 @@ class PopupController {
         this._renderActiveElementInfo(response);
       }
     } catch (error) {
-      this.elementInfo.textContent = '⚠️ Content script not ready. Try refreshing the page.';
+      this.elementInfo.textContent = 'Content script not ready. Try refreshing the page.';
       this.elementInfo.style.display = 'block';
       debug.log('Could not check active element:', error);
     }
@@ -431,48 +452,44 @@ class PopupController {
     });
   }
 
+  // Inject the content script once per popup session. Concurrent callers share
+  // the same promise so the script is never injected twice (re-injection would
+  // re-declare the shared content-script classes and throw).
+  _ensureInjected(tabId) {
+    if (!this._injectPromise) {
+      this._injectPromise = chrome.scripting.executeScript({
+        target: { tabId },
+        files: CONTENT_FILES
+      });
+    }
+    return this._injectPromise;
+  }
+
   async sendMessageToTab(message) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
-    
+    const url = (tab && tab.url) || '';
+
     // Check if tab URL is valid for content scripts
-    if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('moz-extension://')) {
+    if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('moz-extension://')) {
       throw new Error('Extension cannot run on this page. Please navigate to a regular website.');
     }
-    
-    return new Promise(async (resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, message, async (response) => {
-        if (chrome.runtime.lastError) {
-          const error = chrome.runtime.lastError.message;
-          if (error.includes('Could not establish connection') || error.includes('Receiving end does not exist')) {
-            try {
-              // Try to inject the content script manually
-              await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                files: ['content.js']
-              });
-              
-              // Wait a bit for the script to initialize
-              setTimeout(() => {
-                chrome.tabs.sendMessage(tab.id, message, (retryResponse) => {
-                  if (chrome.runtime.lastError) {
-                    reject(new Error('Content script injection failed. Please refresh the page and try again.'));
-                  } else {
-                    resolve(retryResponse);
-                  }
-                });
-              }, 500);
-            } catch (injectionError) {
-              reject(new Error('Content script not loaded. Please refresh the page and try again.'));
-            }
-          } else {
-            reject(new Error(error));
-          }
-        } else {
-          resolve(response);
-        }
-      });
-    });
+
+    try {
+      return await chrome.tabs.sendMessage(tab.id, message);
+    } catch (e) {
+      const msg = (e && e.message) || '';
+      if (!msg.includes('Could not establish connection') && !msg.includes('Receiving end does not exist')) {
+        throw e;
+      }
+      // Content script not present yet — inject it and retry once.
+      try {
+        await this._ensureInjected(tab.id);
+      } catch (injectionError) {
+        throw new Error('Content script not loaded. Please refresh the page and try again.');
+      }
+      return await chrome.tabs.sendMessage(tab.id, message);
+    }
   }
 
   showStatus(message, type) {
@@ -508,7 +525,7 @@ class PopupController {
         
         if (settings.speed) {
           this.speedSlider.value = settings.speed;
-          this.speedValue.textContent = `${settings.speed}ms per character`;
+          this.speedValue.textContent = `${settings.speed}ms`;
         }
         
         if (this.typoChanceSlider) {
@@ -532,15 +549,9 @@ class PopupController {
 
   async openFloatingUI() {
     try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      
-      if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
-        this.showStatus('Cannot open floating UI on this page', 'error');
-        return;
-      }
-      
-      await chrome.tabs.sendMessage(tab.id, { action: 'toggleFloatingUI' });
+      // Routes through sendMessageToTab so the content script is injected on
+      // demand if it isn't already present.
+      await this.sendMessageToTab({ action: 'toggleFloatingUI' });
       this.showStatus('Floating UI opened', 'success');
       window.close(); // Close popup
     } catch (error) {
