@@ -1680,7 +1680,7 @@ class PasteTyper {
     
     const current = this.selectedInputIndex + 1;
     const total = this.availableInputs.length;
-    indicator.textContent = `Input ${current}/${total} • Use ←→ arrows to navigate • Enter to select • Esc to exit`;
+    indicator.textContent = `Input ${current}/${total}  ·  Left/Right arrows to navigate  ·  Enter to select  ·  Esc to exit`;
   }
 
   // 通过原型上的原生 value setter 写入值，避免绕过 React/Vue 的 _valueTracker

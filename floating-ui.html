@@ -60,7 +60,6 @@
     .floating-header .title { display: flex; align-items: center; gap: 9px; }
     .floating-header .title svg { width: 17px; height: 17px; opacity: .95; }
     .floating-header h3 { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }
-    .grip { font-size: 11px; opacity: .7; margin-left: 2px; }
 
     .close-btn {
       background: rgba(255,255,255,.14);
@@ -176,14 +175,13 @@
         <path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13h.01M16.5 13h.01M9 16h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
       </svg>
       <h3>Paste Typer</h3>
-      <span class="grip">⠿</span>
     </div>
     <button class="close-btn" id="closeBtn">×</button>
   </div>
 
   <div class="floating-container">
     <div class="section">
-      <button class="btn btn-clipboard" id="loadClipboard">📋 Load from Clipboard</button>
+      <button class="btn btn-clipboard" id="loadClipboard">Load from Clipboard</button>
     </div>
 
     <div class="section">
@@ -203,8 +201,8 @@
     </div>
 
     <div class="buttons">
-      <button class="btn btn-primary" id="startTyping">▶ Start</button>
-      <button class="btn btn-secondary" id="stopTyping">⏹ Stop</button>
+      <button class="btn btn-primary" id="startTyping">Start</button>
+      <button class="btn btn-secondary" id="stopTyping">Stop</button>
     </div>
 
     <div id="status" class="status"></div>

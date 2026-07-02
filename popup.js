@@ -131,7 +131,7 @@ class PopupController {
         const text = await navigator.clipboard.readText();
         this.textInput.value = text;
         this.saveSettings();
-        this.showStatus('✅ Clipboard text loaded', 'success');
+        this.showStatus('Clipboard text loaded', 'success');
         return;
       } catch (directError) {
         debug.log('Direct clipboard access failed, trying background script...');
@@ -143,12 +143,12 @@ class PopupController {
       if (response.success) {
         this.textInput.value = response.text;
         this.saveSettings();
-        this.showStatus('✅ Clipboard text loaded', 'success');
+        this.showStatus('Clipboard text loaded', 'success');
       } else {
-        this.showStatus('❌ Failed to read clipboard: ' + response.error, 'error');
+        this.showStatus('Failed to read clipboard: ' + response.error, 'error');
       }
     } catch (error) {
-      this.showStatus('❌ Error: ' + error.message, 'error');
+      this.showStatus('Error: ' + error.message, 'error');
     }
   }
 
@@ -156,12 +156,12 @@ class PopupController {
     const text = this.textInput.value.trim();
     
     if (!text) {
-      this.showStatus('❌ Please enter some text to type', 'error');
+      this.showStatus('Please enter some text to type', 'error');
       return;
     }
 
     try {
-      this.showStatus('🔍 Looking for input field...', 'info');
+      this.showStatus('Looking for input field...', 'info');
       this.startButton.disabled = true;
       
       // Get current settings
@@ -208,13 +208,13 @@ class PopupController {
   async stopTyping() {
     try {
       await this.sendMessageToTab({ action: 'stopTyping' });
-      this.showStatus('⏹️ Typing stopped', 'info');
+      this.showStatus('Typing stopped', 'info');
       this.startButton.disabled = false;
-      this.pauseButton.textContent = '⏸️ Pause';
+      this.pauseButton.textContent = 'Pause';
       this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
     } catch (error) {
-      this.showStatus('❌ Error stopping: ' + error.message, 'error');
+      this.showStatus('Error stopping: ' + error.message, 'error');
     }
   }
 
@@ -225,31 +225,31 @@ class PopupController {
       if (isPaused) {
         // Currently paused, so resume
         await this.sendMessageToTab({ action: 'resumeTyping' });
-        this.showStatus('▶️ Typing resumed', 'info');
-        this.pauseButton.textContent = '⏸️ Pause';
+        this.showStatus('Typing resumed', 'info');
+        this.pauseButton.textContent = 'Pause';
         this.pauseButton.style.backgroundColor = '#f59e0b';
       } else {
         // Currently typing, so pause
         await this.sendMessageToTab({ action: 'pauseTyping' });
-        this.showStatus('⏸️ Typing paused', 'info');
-        this.pauseButton.textContent = '▶️ Resume';
+        this.showStatus('Typing paused', 'info');
+        this.pauseButton.textContent = 'Resume';
         this.pauseButton.style.backgroundColor = '#16a34a';
       }
     } catch (error) {
-      this.showStatus('❌ Error toggling pause: ' + error.message, 'error');
+      this.showStatus('Error toggling pause: ' + error.message, 'error');
     }
   }
 
   async resetTyping() {
     try {
       await this.sendMessageToTab({ action: 'resetTyping' });
-      this.showStatus('🔄 Input field cleared and typing reset', 'info');
+      this.showStatus('Input field cleared and typing reset', 'info');
       this.startButton.disabled = false;
-      this.pauseButton.textContent = '⏸️ Pause';
+      this.pauseButton.textContent = 'Pause';
       this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
     } catch (error) {
-      this.showStatus('❌ Error resetting: ' + error.message, 'error');
+      this.showStatus('Error resetting: ' + error.message, 'error');
     }
   }
 
@@ -300,27 +300,27 @@ class PopupController {
         return;
       }
 
-      this.showStatus('🔍 Starting input navigation mode...', 'info');
+      this.showStatus('Starting input navigation mode...', 'info');
       
       const response = await this.sendMessageToTab({ action: 'startInputNavigation' });
       
       if (response && response.success && response.count > 0) {
         this.isNavigationMode = true;
         this.navigationControls.style.display = 'block';
-        this.findInputsButton.textContent = '✕ Exit Navigation';
+        this.findInputsButton.textContent = 'Exit';
         this.findInputsButton.style.backgroundColor = '#ef4444';
         this.findInputsButton.style.color = '#fff';
         this.findInputsButton.style.borderColor = '#ef4444';
         
         this.updateNavigationStatus(1, response.count);
-        this.showStatus(`✅ Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
+        this.showStatus(`Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
       } else if (response && response.count === 0) {
-        this.showStatus('❌ No input fields found on this page', 'error');
+        this.showStatus('No input fields found on this page', 'error');
       } else {
-        this.showStatus('❌ Failed to start navigation mode', 'error');
+        this.showStatus('Failed to start navigation mode', 'error');
       }
     } catch (error) {
-      this.showStatus('❌ Error starting navigation: ' + error.message, 'error');
+      this.showStatus('Error starting navigation: ' + error.message, 'error');
     }
   }
 
@@ -350,13 +350,13 @@ class PopupController {
     try {
       const response = await this.sendMessageToTab({ action: 'selectCurrentInput' });
       if (response && response.success) {
-        this.showStatus('✅ Input field selected!', 'success');
+        this.showStatus('Input field selected!', 'success');
         await this.exitNavigation();
       } else {
-        this.showStatus('❌ Failed to select input field', 'error');
+        this.showStatus('Failed to select input field', 'error');
       }
     } catch (error) {
-      this.showStatus('❌ Error selecting input: ' + error.message, 'error');
+      this.showStatus('Error selecting input: ' + error.message, 'error');
     }
   }
 
@@ -365,7 +365,7 @@ class PopupController {
       await this.sendMessageToTab({ action: 'stopInputNavigation' });
       this.isNavigationMode = false;
       this.navigationControls.style.display = 'none';
-      this.findInputsButton.textContent = '🎯 Navigate';
+      this.findInputsButton.textContent = 'Navigate';
       this.findInputsButton.style.backgroundColor = '';
       this.findInputsButton.style.color = '';
       this.findInputsButton.style.borderColor = '';
@@ -386,7 +386,7 @@ class PopupController {
       const url = (tab && tab.url) || '';
 
       if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
-        this.elementInfo.textContent = '⚠️ Extension pages not supported. Navigate to a regular website.';
+        this.elementInfo.textContent = 'Extension pages not supported. Navigate to a regular website.';
         this.elementInfo.style.display = 'block';
         this.startButton.disabled = true;
         this.findInputsButton.disabled = true;
@@ -408,7 +408,7 @@ class PopupController {
     // Clear and rebuild via DOM API — page-derived values go to textContent only.
     this.elementInfo.textContent = '';
     const label = document.createElement('span');
-    label.textContent = isEditable ? '🎯 Active element: ' : '⚠️ Active element: ';
+    label.textContent = isEditable ? 'Active element: ' : 'Active element: ';
     const code = document.createElement('code');
     code.textContent = desc;
     const trailing = document.createElement('span');
@@ -421,7 +421,7 @@ class PopupController {
     if (!isEditable) {
       this.elementInfo.appendChild(document.createElement('br'));
       const hint = document.createElement('small');
-      hint.textContent = '💡 Use "Find Input Fields" to locate text areas';
+      hint.textContent = 'Use "Find Input Fields" to locate text areas';
       this.elementInfo.appendChild(hint);
     }
     this.elementInfo.style.display = 'block';
@@ -434,7 +434,7 @@ class PopupController {
         this._renderActiveElementInfo(response);
       }
     } catch (error) {
-      this.elementInfo.textContent = '⚠️ Content script not ready. Try refreshing the page.';
+      this.elementInfo.textContent = 'Content script not ready. Try refreshing the page.';
       this.elementInfo.style.display = 'block';
       debug.log('Could not check active element:', error);
     }
