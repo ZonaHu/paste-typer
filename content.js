@@ -195,11 +195,7 @@ class PasteTyper {
       right: 20px;
       width: 350px;
       z-index: 2147483647;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-      border-radius: 8px;
-      background: white;
       display: block;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
     `;
     
     // Create shadow root
@@ -236,7 +232,10 @@ class PasteTyper {
 
       const bodyContent = parsed.body;
       if (bodyContent) {
+        // .pt-root takes over the visual role of <body> inside the shadow tree
+        // (the stylesheet targets `body, .pt-root`).
         const contentDiv = document.createElement('div');
+        contentDiv.className = 'pt-root';
         for (const node of Array.from(bodyContent.childNodes)) {
           contentDiv.appendChild(document.importNode(node, true));
         }

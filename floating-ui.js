@@ -32,18 +32,22 @@ window.addEventListener('message', (event) => {
 });
 
 class FloatingUIController {
-  constructor() {
-    this.textInput = document.getElementById('textInput');
-    this.speedSlider = document.getElementById('speedSlider');
-    this.speedValue = document.getElementById('speedValue');
-    this.typoChanceSlider = document.getElementById('typoChanceSlider');
-    this.typoChanceValue = document.getElementById('typoChanceValue');
-    this.startButton = document.getElementById('startTyping');
-    this.stopButton = document.getElementById('stopTyping');
-    this.loadClipboardButton = document.getElementById('loadClipboard');
-    this.closeBtn = document.getElementById('closeBtn');
-    this.header = document.getElementById('header');
-    this.status = document.getElementById('status');
+  // `root` is the shadow root hosting the UI (or `document` when the page is
+  // opened standalone). document.getElementById cannot see into a shadow tree,
+  // so every lookup must go through the root.
+  constructor(root) {
+    this.root = root;
+    this.textInput = root.getElementById('textInput');
+    this.speedSlider = root.getElementById('speedSlider');
+    this.speedValue = root.getElementById('speedValue');
+    this.typoChanceSlider = root.getElementById('typoChanceSlider');
+    this.typoChanceValue = root.getElementById('typoChanceValue');
+    this.startButton = root.getElementById('startTyping');
+    this.stopButton = root.getElementById('stopTyping');
+    this.loadClipboardButton = root.getElementById('loadClipboard');
+    this.closeBtn = root.getElementById('closeBtn');
+    this.header = root.getElementById('header');
+    this.status = root.getElementById('status');
 
     this.setupEventListeners();
     this.loadSettings();
@@ -130,8 +134,13 @@ class FloatingUIController {
   }
 
   close() {
-    const container = document.body.parentElement;
-    container.style.display = 'none';
+    // The host element lives in the page document; the UI lives in its shadow root.
+    const host = document.getElementById('paste-typer-floating-ui');
+    if (host) {
+      host.style.display = 'none';
+    } else if (document.body) {
+      document.body.style.display = 'none'; // standalone page fallback
+    }
     sendToContentScript('floatingUIClosed');
   }
 
@@ -184,6 +193,18 @@ class FloatingUIController {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  new FloatingUIController();
-});
+// This script is appended to the shadow root AFTER the UI markup, so the
+// elements already exist — initialize immediately. Waiting for DOMContentLoaded
+// would never fire here (the page finished loading long before the panel opens).
+(() => {
+  const host = document.getElementById('paste-typer-floating-ui');
+  const root = (host && host.shadowRoot) || document;
+  if (root.getElementById('textInput')) {
+    new FloatingUIController(root);
+  } else {
+    // Standalone page where the script loads before the DOM is parsed.
+    document.addEventListener('DOMContentLoaded', () => {
+      new FloatingUIController(document);
+    });
+  }
+})();
