@@ -24,10 +24,18 @@ class BackgroundService {
 
   setupContextMenu() {
     chrome.runtime.onInstalled.addListener(() => {
-      chrome.contextMenus.create({
-        id: 'pasteTyper',
-        title: 'Paste as typed text',
-        contexts: ['editable']
+      // onInstalled also fires on reload/update, and the previously registered
+      // menu item survives — clear it first to avoid "duplicate id".
+      chrome.contextMenus.removeAll(() => {
+        chrome.contextMenus.create({
+          id: 'pasteTyper',
+          title: 'Paste as typed text',
+          contexts: ['editable']
+        }, () => {
+          if (chrome.runtime.lastError) {
+            debug.warn('contextMenus.create:', chrome.runtime.lastError.message);
+          }
+        });
       });
     });
 
