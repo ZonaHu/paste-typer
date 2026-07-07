@@ -52,6 +52,7 @@ class PopupController {
     this.loadSettings();
     this.checkCurrentTab();
     this.checkActiveElement();
+    this.syncTypingState();
   }
 
   setupEventListeners() {
@@ -125,30 +126,18 @@ class PopupController {
   async loadFromClipboard() {
     try {
       this.showStatus('Loading from clipboard...', 'info');
-      
-      // Try direct clipboard access first (works in popup context)
-      try {
-        const text = await navigator.clipboard.readText();
-        this.textInput.value = text;
-        this.saveSettings();
-        this.showStatus('Clipboard text loaded', 'success');
+      // With the clipboardRead permission this is reliable inside the popup.
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        this.showStatus('Clipboard is empty', 'error');
         return;
-      } catch (directError) {
-        debug.log('Direct clipboard access failed, trying background script...');
       }
-      
-      // Fallback to background script method
-      const response = await this.sendMessage({ action: 'readClipboard' });
-      
-      if (response.success) {
-        this.textInput.value = response.text;
-        this.saveSettings();
-        this.showStatus('Clipboard text loaded', 'success');
-      } else {
-        this.showStatus('Failed to read clipboard: ' + response.error, 'error');
-      }
+      this.textInput.value = text;
+      this.saveSettings();
+      this.showStatus('Clipboard text loaded', 'success');
     } catch (error) {
-      this.showStatus('Error: ' + error.message, 'error');
+      this.showStatus('Could not read clipboard. Copy some text and try again.', 'error');
+      debug.warn('Clipboard read failed:', error && error.message);
     }
   }
 
@@ -177,15 +166,7 @@ class PopupController {
       if (response && response.success) {
         this.showStatus('Typing started!', 'success');
         this.startProgressTracking();
-        this.startButton.style.display = 'none';
-        this.pauseButton.style.display = 'block';
-        this.stopButton.style.display = 'block';
-        if (this.helpText) {
-          this.helpText.style.display = 'block';
-        }
-        setTimeout(() => {
-          this.startButton.disabled = false;
-        }, 2000);
+        this._setControls(true);
       } else {
         const err = (response && response.error) || '';
         if (err.includes('No editable input field') || err.includes('未找到') || err.includes('编辑器')) {
@@ -209,10 +190,8 @@ class PopupController {
     try {
       await this.sendMessageToTab({ action: 'stopTyping' });
       this.showStatus('Typing stopped', 'info');
-      this.startButton.disabled = false;
-      this.pauseButton.textContent = 'Pause';
-      this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
+      this._setControls(false);
     } catch (error) {
       this.showStatus('Error stopping: ' + error.message, 'error');
     }
@@ -244,10 +223,8 @@ class PopupController {
     try {
       await this.sendMessageToTab({ action: 'resetTyping' });
       this.showStatus('Input field cleared and typing reset', 'info');
-      this.startButton.disabled = false;
-      this.pauseButton.textContent = 'Pause';
-      this.pauseButton.style.backgroundColor = '#f59e0b';
       this.stopProgressTracking();
+      this._setControls(false);
     } catch (error) {
       this.showStatus('Error resetting: ' + error.message, 'error');
     }
@@ -263,6 +240,8 @@ class PopupController {
           
           if (!isTyping) {
             this.stopProgressTracking();
+            this._setControls(false);
+            this.showStatus('Typing complete', 'success');
             return;
           }
           
@@ -290,6 +269,35 @@ class PopupController {
     this.progressContainer.style.display = 'none';
     this.progressBar.style.width = '0%';
     this.progressText.textContent = '0 / 0';
+  }
+
+  // Single source of truth for the Start / Pause / Stop button visibility.
+  _setControls(typing) {
+    this.startButton.style.display = typing ? 'none' : 'block';
+    this.pauseButton.style.display = typing ? 'block' : 'none';
+    this.stopButton.style.display = typing ? 'block' : 'none';
+    if (this.helpText) this.helpText.style.display = typing ? 'block' : 'none';
+    if (!typing) {
+      this.startButton.disabled = false;
+      this.pauseButton.textContent = 'Pause';
+      this.pauseButton.style.backgroundColor = '#f59e0b';
+    }
+  }
+
+  // On popup open, reflect whatever the content script is currently doing so the
+  // buttons aren't stuck showing Pause/Stop after typing finished (or vice versa).
+  async syncTypingState() {
+    try {
+      const r = await this.sendMessageToTab({ action: 'getTypingProgress' });
+      if (r && r.isTyping) {
+        this._setControls(true);
+        this.startProgressTracking();
+      } else {
+        this._setControls(false);
+      }
+    } catch (e) {
+      this._setControls(false);
+    }
   }
 
   async findInputFields() {
