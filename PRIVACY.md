@@ -37,6 +37,7 @@ It is not synced to your Google account and not sent to the developer.
 - `storage` — persist the settings listed above.
 - `contextMenus` — add the right-click "Paste as typed text" menu item on editable fields.
 - `scripting` — inject the content script into the active tab on demand when you invoke the extension.
+- `clipboardRead` — read the clipboard when you click "Load from Clipboard" so its text can be typed. Read only on that action; never transmitted.
 
 The extension requests no broad host permissions, so it cannot access any site
 until you explicitly invoke it on that tab.

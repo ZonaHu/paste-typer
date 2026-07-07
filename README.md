@@ -77,13 +77,15 @@ Useful for fields that don't accept paste, for accessibility, and for data-entry
 - `storage` - Save user preferences (text, speed, typo rate, floating UI position)
 - `contextMenus` - "Paste as typed text" right-click menu on editable fields
 - `scripting` - Inject the content script into the active tab on demand
+- `clipboardRead` - Read the clipboard when you click "Load from Clipboard"
 
 The extension requests no broad host permissions. It cannot read or run on any
 site until you explicitly invoke it on that tab, at which point `activeTab`
 grants temporary access to that one tab.
 
-The extension does NOT request `clipboardRead`. The popup and floating UI read the
-clipboard via `navigator.clipboard.readText()` on user gesture.
+The clipboard is read only when you click "Load from Clipboard" (or use the
+context menu). Its contents go into the extension's text field and are never
+transmitted anywhere.
 
 ## Privacy
 
