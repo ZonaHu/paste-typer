@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Paste Typer",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Types clipboard text character-by-character into web forms. Useful for fields that don't accept paste and for data-entry workflows.",
   "permissions": [
     "activeTab",
