@@ -49,6 +49,7 @@ class PasteTyper {
       try {
         if (action === 'startTyping') {
           if (payload.typoChance !== undefined) this.typoChance = payload.typoChance;
+          if (payload.speed !== undefined) this.typingSpeed = payload.speed;
           // Await the start so a missing target rejects to the outer catch and
           // replies success:false, rather than reporting a false success.
           await this.startTyping(payload.text, payload.targetElement);
@@ -88,6 +89,9 @@ class PasteTyper {
         // Update typoChance if provided
         if (request.typoChance !== undefined) {
           this.typoChance = request.typoChance;
+        }
+        if (request.speed !== undefined) {
+          this.typingSpeed = request.speed;
         }
         // startTyping resolves once typing has started (target found, focused,
         // cleared); report the real outcome so the popup can show "no input

@@ -110,11 +110,13 @@ class FloatingUIController {
 
     this.showStatus('Starting typing...', 'info');
     const typoChance = parseInt(this.typoChanceSlider.value) / 100;
+    const speed = parseInt(this.speedSlider.value);
 
     const response = await sendToContentScript('startTyping', {
       text,
       targetElement: true,
-      typoChance
+      typoChance,
+      speed
     });
 
     if (response && response.success) {

@@ -155,12 +155,14 @@ class PopupController {
       
       // Get current settings
       const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.005;
-      
+      const speed = parseInt(this.speedSlider.value);
+
       const response = await this.sendMessageToTab({
         action: 'startTyping',
         text: text,
         targetElement: true,
-        typoChance: typoChance
+        typoChance: typoChance,
+        speed: speed
       });
       
       if (response && response.success) {
