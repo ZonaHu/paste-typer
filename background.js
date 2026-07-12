@@ -19,7 +19,6 @@ const CONTENT_FILES = [
 class BackgroundService {
   constructor() {
     this.setupContextMenu();
-    this.setupMessageHandlers();
   }
 
   setupContextMenu() {
@@ -67,17 +66,6 @@ class BackgroundService {
       await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_FILES });
       return await chrome.tabs.sendMessage(tabId, message);
     }
-  }
-
-  setupMessageHandlers() {
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request.action === 'readClipboard') {
-        this.readClipboard()
-          .then(text => sendResponse({success: true, text}))
-          .catch(error => sendResponse({success: false, error: error.message}));
-        return true; // Indicates we will send a response asynchronously
-      }
-    });
   }
 
   async readClipboard() {

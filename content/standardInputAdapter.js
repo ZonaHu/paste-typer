@@ -44,6 +44,20 @@ class StandardInputAdapter extends InputAdapter {
   }
 
   /**
+   * 清空目标元素。覆写基类，用原生 setter 写入以兼容 React/Vue（基类直接
+   * element.value='' 会绕过框架的 _valueTracker）。
+   */
+  async clear(element) {
+    if (!element) return;
+    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+      this._setNativeValue(element, '');
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (element.contentEditable === 'true' || element.isContentEditable) {
+      element.textContent = '';
+    }
+  }
+
+  /**
    * 在标准元素中输入单个字符
    */
   async typeCharacter(element, char) {
