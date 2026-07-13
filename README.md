@@ -3,6 +3,8 @@
 A Chrome extension that types clipboard text character-by-character into web forms.
 Useful for fields that don't accept paste, for accessibility, and for data-entry workflows.
 
+**[➡️ Install from the Chrome Web Store](https://chromewebstore.google.com/detail/ofklpccfpgecjdccbnlmjbndkefgjaid)**
+
 ## Features
 
 - **Human-like typing simulation** with variable speed and natural pauses
