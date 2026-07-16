@@ -29,20 +29,23 @@ class GoogleDocsAdapter extends InputAdapter {
   }
 
   /**
-   * 检测是否为 Google Docs 环境
-   * 仅在 docs.google.com/document/* 路径下返回 true
+   * 检测是否为 Google Docs / Slides 环境。
+   * Docs 和 Slides 共用同一套 canvas 编辑器基建（隐藏的
+   * .docs-texteventtarget-iframe 输入层），逐字输入序列完全相同。
    */
   static detect() {
     const hostname = window.location.hostname;
     const pathname = window.location.pathname;
 
-    const isDocsPage = hostname === 'docs.google.com' && pathname.startsWith('/document/');
-    if (!isDocsPage) return false;
+    const isEditorPage = hostname === 'docs.google.com' &&
+      (pathname.startsWith('/document/') || pathname.startsWith('/presentation/'));
+    if (!isEditorPage) return false;
 
-    const hasDocsEditor = document.querySelector('#docs-editor') ||
-                          document.querySelector('.kix-appview-editor') ||
-                          document.querySelector('[class*="kix-"]');
-    const detected = !!hasDocsEditor;
+    // 优先看共用的输入靶 iframe；Docs 还有 kix 编辑器可作后备判据。
+    const hasEditor = document.querySelector('.docs-texteventtarget-iframe') ||
+                      document.querySelector('#docs-editor') ||
+                      document.querySelector('[class*="kix-"]');
+    const detected = !!hasEditor;
     debug.log('[GoogleDocsAdapter] detect():', { hostname, pathname, detected });
     return detected;
   }

@@ -13,7 +13,7 @@ Useful for fields that don't accept paste, for accessibility, and for data-entry
 - **Adjustable typing speed and typo rate**
 - **Floating in-page UI** with drag support, styled inside a Shadow DOM
 - **Input navigation mode** to step through editable fields on the page
-- **Google Docs adapter** with logic specific to the Docs editor
+- **Google Docs and Slides support** via a canvas-editor adapter
 - **Visual feedback** - status messages, progress bar, active-element info
 
 ## Installation
@@ -71,7 +71,7 @@ Useful for fields that don't accept paste, for accessibility, and for data-entry
 
 - Text inputs (`<input type="text">`, `email`, `password`, `search`, `url`, `tel`)
 - `<textarea>`
-- `contenteditable` elements (including Google Docs canvas)
+- `contenteditable` elements (including the Google Docs and Slides canvas)
 
 ## Permissions
 
