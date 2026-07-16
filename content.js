@@ -139,10 +139,16 @@ class PasteTyper {
         });
       } else if (request.action === 'startInputNavigation') {
         this.startInputNavigation();
+        // Google Docs/Slides draw their text boxes on a canvas, so there are no
+        // DOM inputs to enumerate. Flag it so the popup can guide the user to
+        // double-click a text box and press Start instead of failing silently.
+        const canvasEditor = this.availableInputs.length === 0 &&
+          typeof GoogleDocsAdapter !== 'undefined' && GoogleDocsAdapter.detect();
         sendResponse({
           success: true,
           count: this.availableInputs.length,
-          selectedIndex: this.selectedInputIndex
+          selectedIndex: this.selectedInputIndex,
+          canvasEditor: !!canvasEditor
         });
       } else if (request.action === 'stopInputNavigation') {
         this.stopInputNavigation();

@@ -324,6 +324,8 @@ class PopupController {
         
         this.updateNavigationStatus(1, response.count);
         this.showStatus(`Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
+      } else if (response && response.canvasEditor) {
+        this.showStatus('Google Docs/Slides: double-click a text box to edit it, then press Start (no need to navigate).', 'info');
       } else if (response && response.count === 0) {
         this.showStatus('No input fields found on this page', 'error');
       } else {
