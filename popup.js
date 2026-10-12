@@ -224,7 +224,7 @@ class PopupController {
   async resetTyping() {
     try {
       await this.sendMessageToTab({ action: 'resetTyping' });
-      this.showStatus('Input field cleared and typing reset', 'info');
+      this.showStatus('All text in the selected field was cleared', 'info');
       this.stopProgressTracking();
       this._setControls(false);
     } catch (error) {
