@@ -14,6 +14,7 @@ class PasteTyper {
     this.currentPosition = 0;
     this.targetElement = null;
     this.currentAdapter = null; // 当前使用的适配器
+    this.lastError = null;
     this.typingSpeed = 50; // Base delay between characters in ms
     this.speedVariation = 20; // Random variation in typing speed
     this.pauseChance = 0.1; // Chance of pausing during typing
@@ -27,51 +28,12 @@ class PasteTyper {
     this.availableInputs = [];
     this.selectedInputIndex = -1;
     this.navigationMode = false;
+    this.floatingContainer = null;
+    this.floatingUIController = null;
     
     this.setupMessageListener();
-    this.setupFloatingUIBridge();
     this.setupKeyboardNavigation();
     this.loadTypoChanceSetting();
-  }
-
-  setupFloatingUIBridge() {
-    const TAG = 'paste-typer-floating-ui';
-    window.addEventListener('message', async (event) => {
-      if (event.source !== window) return;
-      const data = event.data;
-      if (!data || data.source !== TAG || data.direction !== 'to-content') return;
-
-      const { requestId, action, payload = {} } = data;
-      const reply = (response) => {
-        window.postMessage({ source: TAG, direction: 'to-floating-ui', requestId, response }, '*');
-      };
-
-      try {
-        if (action === 'startTyping') {
-          if (payload.typoChance !== undefined) this.typoChance = payload.typoChance;
-          if (payload.speed !== undefined) this.typingSpeed = payload.speed;
-          // Await the start so a missing target rejects to the outer catch and
-          // replies success:false, rather than reporting a false success.
-          await this.startTyping(payload.text, payload.targetElement);
-          reply({ success: true });
-        } else if (action === 'stopTyping') {
-          this.stopTyping();
-          reply({ success: true });
-        } else if (action === 'floatingUIClosed') {
-          reply({ success: true });
-        } else if (action === 'saveSettings') {
-          chrome.storage.local.set({ pasteTyperSettings: payload.settings }, () => reply({ success: true }));
-        } else if (action === 'loadSettings') {
-          chrome.storage.local.get(['pasteTyperSettings'], (result) => {
-            reply({ success: true, settings: result.pasteTyperSettings || null });
-          });
-        } else {
-          reply({ success: false, error: 'unknown action' });
-        }
-      } catch (error) {
-        reply({ success: false, error: error.message });
-      }
-    });
   }
 
   loadTypoChanceSetting() {
@@ -85,7 +47,11 @@ class PasteTyper {
 
   setupMessageListener() {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request.action === 'startTyping') {
+      if (request.action === 'getTargetInfo') {
+        sendResponse({ hasTarget: !!targetTracker.getTarget() || GoogleDocsAdapter.detect(),
+          invalidTarget: !!targetTracker.element && !targetTracker.getTarget(),
+          changedAt: targetTracker.changedAt, focused: document.hasFocus(), isTyping: this.isTyping });
+      } else if (request.action === 'startTyping') {
         // Update typoChance if provided
         if (request.typoChance !== undefined) {
           this.typoChance = request.typoChance;
@@ -115,7 +81,7 @@ class PasteTyper {
           sendResponse({success: false, error: error.message});
         });
       } else if (request.action === 'getActiveElement') {
-        const element = document.activeElement;
+        const element = targetTracker.getTarget() || document.activeElement;
         if (!element) {
           sendResponse({ tagName: '', type: '', id: '', className: '', isEditable: false });
         } else {
@@ -135,7 +101,8 @@ class PasteTyper {
           position: this.currentPosition,
           total: this.currentText.length,
           isTyping: this.isTyping,
-          isPaused: this.isPaused
+          isPaused: this.isPaused,
+          error: this.lastError
         });
       } else if (request.action === 'startInputNavigation') {
         this.startInputNavigation();
@@ -173,19 +140,17 @@ class PasteTyper {
       } else if (request.action === 'toggleFloatingUI') {
         this.toggleFloatingUI();
         sendResponse({success: true});
-      } else if (request.action === 'floatingUIClosed') {
-        // Floating UI was closed, do cleanup if needed
-        sendResponse({success: true});
       }
       return true;
     });
   }
 
   toggleFloatingUI() {
+    targetTracker.capture(document.activeElement);
     // Check if Floating UI already exists
-    let floatingContainer = document.getElementById('paste-typer-floating-ui');
+    let floatingContainer = this.floatingContainer;
     
-    if (floatingContainer) {
+    if (floatingContainer?.isConnected) {
       // Toggle visibility
       if (floatingContainer.style.display === 'none') {
         floatingContainer.style.display = 'block';
@@ -198,6 +163,8 @@ class PasteTyper {
     
     // Create Floating UI container with Shadow DOM (for style isolation and drag support)
     floatingContainer = document.createElement('div');
+    this.floatingContainer = floatingContainer;
+    this.floatingUIController = null;
     floatingContainer.id = 'paste-typer-floating-ui';
     floatingContainer.style.cssText = `
       position: fixed;
@@ -234,6 +201,8 @@ class PasteTyper {
 
       // Parse the extension-owned HTML safely (no innerHTML assignment on live DOM).
       const parsed = new DOMParser().parseFromString(html, 'text/html');
+      // The template is markup only; no page-world scripts may be imported.
+      parsed.querySelectorAll('script').forEach(script => script.remove());
 
       const styles = parsed.querySelector('style');
       if (styles) {
@@ -251,14 +220,15 @@ class PasteTyper {
         }
         shadowRoot.appendChild(contentDiv);
 
-        const script = document.createElement('script');
-        script.src = chrome.runtime.getURL('floating-ui.js');
-        shadowRoot.appendChild(script);
+        this.floatingUIController = new FloatingUIController(shadowRoot, container);
       }
 
       this._setupFloatingUIDrag(container, shadowRoot);
     } catch (error) {
       console.error('[PasteTyper] Failed to load Floating UI:', error);
+      // Do not leave the uninitialized full panel above the fallback controls.
+      shadowRoot.replaceChildren();
+      this.floatingUIController = null;
       this._createInlineFloatingUI(shadowRoot, container);
     }
   }
@@ -288,6 +258,7 @@ class PasteTyper {
       header.style.userSelect = 'none';
       
       const handleMouseDown = (e) => {
+        if (e.isTrusted !== true) return;
         // Don't drag if clicking close button
         const target = e.target;
         if (target.classList && target.classList.contains('close-btn')) return;
@@ -306,6 +277,7 @@ class PasteTyper {
       };
       
       const handleDrag = (e) => {
+        if (e.isTrusted !== true) return;
         if (!dragState.isDragging) return;
         
         const x = e.clientX - dragState.dragOffset.x;
@@ -322,6 +294,7 @@ class PasteTyper {
       };
       
       const handleMouseUp = (e) => {
+        if (e.isTrusted !== true) return;
         if (!dragState.isDragging) return;
         
         dragState.isDragging = false;
@@ -361,12 +334,13 @@ class PasteTyper {
     body.className = 'floating-container';
 
     const note = document.createElement('p');
-    note.textContent = 'Floating UI loaded';
+    note.textContent = 'Floating UI could not load. Reload the extension and refresh this page.';
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn btn-primary';
     closeBtn.textContent = 'Close';
-    closeBtn.addEventListener('click', () => {
+    closeBtn.addEventListener('click', event => {
+      if (event.isTrusted !== true) return;
       container.style.display = 'none';
     });
 
@@ -427,8 +401,9 @@ class PasteTyper {
         debug.log('[PasteTyper] Element isContentEditable:', targetElement.isContentEditable);
         
         this.isTyping = true;
+        this.lastError = null;
         this.isPaused = false;
-        this.currentText = text;
+        this.currentText = text.replace(/\r\n?/g, '\n');
         this.currentPosition = 0;
         this.targetElement = targetElement;
 
@@ -443,6 +418,7 @@ class PasteTyper {
         // 开始逐字输入（不等待完成，异步执行）
         this.continueTyping().catch(err => {
           console.error('[PasteTyper] Typing error:', err);
+          this.lastError = err.message;
           this.isTyping = false;
         });
         return;
@@ -489,12 +465,13 @@ class PasteTyper {
         if (Math.random() < this.pauseChance) {
           await this.sleep(this.pauseDuration);
         }
+        if (!this.isTyping) break;
+        if (this.isPaused) continue;
         
         // Type the character using the adapter
         const result = await this.currentAdapter.typeCharacter(this.targetElement, char);
         if (!result.success) {
-          debug.warn('[PasteTyper] Failed to type character:', char, result.error);
-          // 继续尝试下一个字符，不中断整个流程
+          throw new Error(result.error || 'The editor did not accept input.');
         }
         this.currentPosition++;
       }
@@ -536,19 +513,19 @@ class PasteTyper {
     }
 
     // Type the typo character
-    await this.currentAdapter.typeCharacter(this.targetElement, typoChar);
+    this.requireInput(await this.currentAdapter.typeCharacter(this.targetElement, typoChar));
 
     // Wait a bit (human realizes the mistake)
     await this.sleep(this.typoCorrectionDelay);
 
     // Delete the typo (backspace)
-    await this.currentAdapter.simulateBackspace(this.targetElement);
+    this.requireInput(await this.currentAdapter.simulateBackspace(this.targetElement));
 
     // Small pause before typing correct character
     await this.sleep(50 + Math.random() * 50);
 
     // Type the correct character
-    await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
+    this.requireInput(await this.currentAdapter.typeCharacter(this.targetElement, correctChar));
 
     // Move position forward
     this.currentPosition++;
@@ -579,6 +556,10 @@ class PasteTyper {
     }
     
     return null;
+  }
+
+  requireInput(result) {
+    if (!result || !result.success) throw new Error(result?.error || 'The editor did not accept input.');
   }
 
   getRandomDelay() {
@@ -696,8 +677,11 @@ class PasteTyper {
     // Strategy 0: Ask the active adapter to resolve the target. Site-specific
     // adapters (e.g. Google Docs) locate editors that the generic DOM queries
     // below cannot find.
-    const adapter = this.currentAdapter ||
-      (typeof adapterManager !== 'undefined' && adapterManager ? adapterManager.getAdapter() : null);
+    const adapter = typeof adapterManager !== 'undefined' && adapterManager
+      ? adapterManager.getAdapter() : null;
+    if (targetTracker.element && !targetTracker.getTarget()) {
+      throw new Error('The selected input is no longer editable. Click another input and try again.');
+    }
     if (adapter) {
       try {
         const targetResult = await adapter.getTarget(true);
@@ -738,8 +722,8 @@ class PasteTyper {
       const isMonacoEditor = this.isMonacoEditor(elementToClear);
       debug.log('Is Monaco editor:', isMonacoEditor);
       
-      if (isMonacoEditor) {
-        await this.clearMonacoEditor(elementToClear);
+      if (adapter instanceof MonacoAdapter) {
+        await adapter.reset(elementToClear);
       } else {
         // Focus the element first and ensure it's ready
         elementToClear.focus();
@@ -1594,6 +1578,7 @@ class PasteTyper {
       
       // Store as target element BEFORE stopping navigation
       this.targetElement = selectedInput;
+      targetTracker.capture(selectedInput);
       debug.log('Selected input element:', selectedInput);
       
       // Focus the element

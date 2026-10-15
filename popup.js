@@ -6,16 +6,6 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
   };
 }
 
-// Content script files, in dependency order. Injected on demand since the
-// extension uses activeTab rather than an <all_urls> auto content script.
-const CONTENT_FILES = [
-  'content/inputAdapter.js',
-  'content/googleDocsAdapter.js',
-  'content/standardInputAdapter.js',
-  'content/adapterManager.js',
-  'content.js'
-];
-
 class PopupController {
   constructor() {
     this.textInput = document.getElementById('textInput');
@@ -46,7 +36,11 @@ class PopupController {
     
     this.progressInterval = null;
     this.isNavigationMode = false;
-    this._injectPromise = null; // dedupes concurrent on-demand injections
+    this.tabId = null;
+    this.frameOrigin = document.getElementById('frameOrigin');
+    this.frameAccess = document.getElementById('frameAccess');
+    document.getElementById('allowFrame').addEventListener('click', () => this.allowFrame());
+    this.prepareFrames();
 
     this.setupEventListeners();
     this.loadSettings();
@@ -142,7 +136,7 @@ class PopupController {
   }
 
   async startTyping() {
-    const text = this.textInput.value.trim();
+    const text = this.textInput.value;
     
     if (!text) {
       this.showStatus('Please enter some text to type', 'error');
@@ -243,7 +237,7 @@ class PopupController {
           if (!isTyping) {
             this.stopProgressTracking();
             this._setControls(false);
-            this.showStatus('Typing complete', 'success');
+            this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
             return;
           }
           
@@ -464,19 +458,6 @@ class PopupController {
     });
   }
 
-  // Inject the content script once per popup session. Concurrent callers share
-  // the same promise so the script is never injected twice (re-injection would
-  // re-declare the shared content-script classes and throw).
-  _ensureInjected(tabId) {
-    if (!this._injectPromise) {
-      this._injectPromise = chrome.scripting.executeScript({
-        target: { tabId },
-        files: CONTENT_FILES
-      });
-    }
-    return this._injectPromise;
-  }
-
   async sendMessageToTab(message) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
@@ -487,20 +468,43 @@ class PopupController {
       throw new Error('Extension cannot run on this page. Please navigate to a regular website.');
     }
 
+    const response = await chrome.runtime.sendMessage({ action: 'ptRoute', tabId: tab.id, message });
+    if (response && response.success === false) throw new Error(response.error || 'The command failed.');
+    return response;
+  }
+
+  async prepareFrames() {
     try {
-      return await chrome.tabs.sendMessage(tab.id, message);
-    } catch (e) {
-      const msg = (e && e.message) || '';
-      if (!msg.includes('Could not establish connection') && !msg.includes('Receiving end does not exist')) {
-        throw e;
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      this.tabId = tab.id;
+      const response = await chrome.runtime.sendMessage({ action: 'ptPrepare', tabId: tab.id });
+      this.frameOrigin.textContent = '';
+      for (const origin of response.missingOrigins || []) {
+        const option = document.createElement('option');
+        option.value = origin;
+        option.textContent = new URL(origin).host;
+        this.frameOrigin.appendChild(option);
       }
-      // Content script not present yet — inject it and retry once.
-      try {
-        await this._ensureInjected(tab.id);
-      } catch (injectionError) {
-        throw new Error('Content script not loaded. Please refresh the page and try again.');
+      this.frameAccess.style.display = this.frameOrigin.options.length ? 'block' : 'none';
+    } catch (error) {
+      debug.warn('Could not discover embedded editors:', error.message);
+    }
+  }
+
+  async allowFrame() {
+    // Called directly by a button click: Chrome requires a user gesture.
+    const origin = this.frameOrigin.value;
+    if (!origin) return;
+    try {
+      const granted = await chrome.permissions.request({ origins: [origin] });
+      if (!granted) {
+        this.showStatus('Site access was not granted. You can still use fields on the main page.', 'info');
+        return;
       }
-      return await chrome.tabs.sendMessage(tab.id, message);
+      await this.prepareFrames();
+      this.showStatus('Access enabled. Click inside the editor, then reopen Paste Typer or use Floating UI.', 'success');
+    } catch (error) {
+      this.showStatus('Could not enable editor access: ' + error.message, 'error');
     }
   }
 

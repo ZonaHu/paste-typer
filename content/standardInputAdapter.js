@@ -23,8 +23,12 @@ class StandardInputAdapter extends InputAdapter {
   async getTarget(useActiveElement = true) {
     let targetElement = null;
 
+    if (useActiveElement && targetTracker.element && !targetTracker.getTarget()) {
+      return { element: null, error: 'The selected input is no longer editable. Click another input and try again.' };
+    }
+
     if (useActiveElement) {
-      targetElement = document.activeElement;
+      targetElement = targetTracker.getTarget() || document.activeElement;
       
       if (this._isEditableElement(targetElement)) {
         return { element: targetElement };
@@ -41,6 +45,11 @@ class StandardInputAdapter extends InputAdapter {
     }
 
     return { element: targetElement };
+  }
+
+  async focus(element) {
+    targetTracker.restore(element);
+    await this._sleep(50);
   }
 
   /**
@@ -266,7 +275,7 @@ class StandardInputAdapter extends InputAdapter {
    * 检查元素是否可编辑
    */
   _isEditableElement(element) {
-    if (!element) return false;
+    if (!element || !element.isConnected || element.closest('#paste-typer-floating-ui')) return false;
 
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       return element.type !== 'hidden' && !element.disabled && !element.readOnly;

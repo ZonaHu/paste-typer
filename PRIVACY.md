@@ -1,6 +1,6 @@
 # Paste Typer — Privacy Policy
 
-_Last updated: 2026-05-14_
+_Last updated: 2026-10-07_
 
 Paste Typer is a Chrome extension that types clipboard text character-by-character
 into web forms. This policy describes what data the extension handles.
@@ -31,6 +31,11 @@ and only for the feature you invoke:
 All `chrome.storage.local` data lives in your browser profile on your device.
 It is not synced to your Google account and not sent to the developer.
 
+The selected tab/frame's document IDs and selection timestamp are kept in
+`chrome.storage.session` for the current browser session, so the background worker
+can resume routing safely. This does not store editor text or browsing history.
+The actual field and native selection remain in the page's content script memory.
+
 ## Permissions and why they exist
 
 - `activeTab` — grants temporary access to the focused tab only when you invoke the extension.
@@ -38,9 +43,16 @@ It is not synced to your Google account and not sent to the developer.
 - `contextMenus` — add the right-click "Paste as typed text" menu item on editable fields.
 - `scripting` — inject the content script into the active tab on demand when you invoke the extension.
 - `clipboardRead` — read the clipboard when you click "Load from Clipboard" so its text can be typed. Read only on that action; never transmitted.
+- `webNavigation` — enumerate frame IDs and URLs in the tab where you invoke the
+  extension, so commands can target an embedded editor. No browsing history is
+  recorded, and no navigation events are monitored.
 
-The extension requests no broad host permissions, so it cannot access any site
-until you explicitly invoke it on that tab.
+There are no required host permissions. Optional HTTP/HTTPS host permissions allow
+you to grant access to an individual embedded editor's site from the popup. The
+extension requests the selected site's origin, not access to every site. Granted
+access persists until revoked in Chrome's extension settings. Content scripts are
+only injected when you invoke the extension on a tab; no automatic site scripts
+are registered.
 
 ## Third parties
 
