@@ -329,6 +329,12 @@
     </div>
 
     <div id="status" class="status" style="display: none;"></div>
+    <div id="frameAccess" class="card" style="display: none;">
+      <label for="frameOrigin">Allow access to an embedded editor's site</label>
+      <select id="frameOrigin" style="width: 100%; margin: 8px 0;"></select>
+      <button id="allowFrame" class="btn btn-ghost">Allow selected site</button>
+      <div class="help-text">Choose the site hosting your editor. Access is optional and can be revoked in Chrome's extension settings. After allowing, click the editor before starting.</div>
+    </div>
     <div id="elementInfo" class="element-info" style="display: none;"></div>
   </div>
 

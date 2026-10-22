@@ -1,5 +1,6 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "106",
   "name": "Paste Typer",
   "version": "1.0.7",
   "description": "Types clipboard text character-by-character into web forms. Useful for fields that don't accept paste and for data-entry workflows.",
@@ -8,8 +9,10 @@
     "storage",
     "contextMenus",
     "scripting",
-    "clipboardRead"
+    "clipboardRead",
+    "webNavigation"
   ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -37,8 +40,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "floating-ui.html",
-        "floating-ui.js"
+        "floating-ui.html"
       ],
       "matches": [
         "<all_urls>"

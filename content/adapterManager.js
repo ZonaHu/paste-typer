@@ -23,7 +23,8 @@ class AdapterManager {
     this.adapters.push(AdapterClass);
   }
 
-  getAdapter() {
+  getAdapter(element = targetTracker.getTarget() || document.activeElement) {
+    if (MonacoAdapter.detect(element)) return new MonacoAdapter();
     debug.log('[AdapterManager] Checking adapters...');
     for (const AdapterClass of this.adapters) {
       const adapterName = AdapterClass.name;

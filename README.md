@@ -42,6 +42,7 @@ Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input
 - **Adjustable speed and typo rate**
 - **Floating in-page UI**, draggable, isolated in a Shadow DOM
 - **Google Docs and Slides support** via a canvas-editor adapter
+- **Monaco textarea-based editors**, including editors in embedded frames
 - **Input navigation mode** to step through editable fields on a page
 - **Zero dependencies, zero network requests** — everything runs locally
 
@@ -67,6 +68,18 @@ git clone https://github.com/ZonaHu/paste-typer.git
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 
+**Embedded editors** — if the editor is hosted on another site, choose its site under
+"Allow access to an embedded editor's site" in the popup and click "Allow selected
+site". Only that site is requested; you can revoke access in Chrome's extension
+settings. Then click inside the editor and reopen the popup, or start from the
+floating UI. Monaco input is inserted at the saved caret/selection without clearing
+the document. Monaco must expose its editor API as `window.monaco` so the extension
+can temporarily suppress automatic indentation and paired characters during each
+simulated keystroke, then immediately restore the editor's options. Text still
+enters through keyboard/text-input events, not clipboard paste or direct model
+edits. Newer Monaco configurations using EditContext rather than a textarea
+are not supported yet. Chrome 106 or newer is required.
+
 ## Supported fields
 
 | Field type | Supported |
@@ -75,6 +88,7 @@ git clone https://github.com/ZonaHu/paste-typer.git
 | `<textarea>` | ✅ |
 | `contenteditable` | ✅ |
 | Google Docs / Slides canvas | ✅ |
+| Monaco textarea-based editor (including permitted iframes) | ✅ |
 
 ## How it works
 
@@ -88,9 +102,12 @@ content/
   inputAdapter.js          base adapter interface
   standardInputAdapter.js  <input> / <textarea> / contenteditable
   googleDocsAdapter.js     Google Docs & Slides canvas editor
+  monacoAdapter.js         Monaco keyboard/text input with temporary option suppression
+  targetTracker.js         remembers the selected field and native selection
   adapterManager.js        picks the adapter for the page
+frameRouter.js             selects and addresses a single permitted frame
 popup.html / popup.js              toolbar popup
-floating-ui.html / floating-ui.js  in-page floating UI
+floating-ui.html / floating-ui.js  floating markup / isolated content-script controller
 ```
 
 ## Privacy
@@ -98,7 +115,7 @@ floating-ui.html / floating-ui.js  in-page floating UI
 No network requests. No analytics. No accounts.
 
 - The clipboard is read **only** when you click "Load from Clipboard" or use the context menu
-- No broad host permissions — `activeTab` grants access to one tab, only when you invoke the extension
+- No required host permissions — `activeTab` covers the main site's origin; embedded sites can be allowed individually
 - Settings live in `chrome.storage.local` (browser-local, not synced)
 
 Full details in [PRIVACY.md](PRIVACY.md).
@@ -113,6 +130,11 @@ Full details in [PRIVACY.md](PRIVACY.md).
 | `contextMenus` | The "Paste as typed text" right-click item |
 | `scripting` | Inject the content script into the active tab on demand |
 | `clipboardRead` | Read the clipboard when you click "Load from Clipboard" |
+| `webNavigation` | Identify frames in the invoked tab to address the selected editor |
+
+Optional host access is declared for HTTP/HTTPS sites but is requested only for the
+individual embedded site you select. Content scripts are still injected on demand;
+granting access does not install automatic scripts on that site.
 
 </details>
 
