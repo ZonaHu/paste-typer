@@ -43,6 +43,18 @@ Run the frame routing and selection regression checks with Node.js:
 node --test tests/*.test.cjs
 ```
 
+For ordinary-field insertion changes, run `tests/standardInput.integration.cjs`
+with the same test-only Playwright setup described below:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/standardInput.integration.cjs
+```
+
+This uses a disposable Chrome profile and extension copy. It checks caret insertion,
+selection replacement, input notifications, popup/floating controls, and explicit
+Clear. Context-menu coverage exercises its frame-routing contract, not the native
+menu or clipboard permission UI.
+
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.

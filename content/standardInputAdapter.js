@@ -123,7 +123,9 @@ class StandardInputAdapter extends InputAdapter {
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
       
-      if (selection.rangeCount === 0) {
+      if (selection.rangeCount === 0 ||
+          !element.contains(selection.getRangeAt(0).startContainer) ||
+          !element.contains(selection.getRangeAt(0).endContainer)) {
         const range = document.createRange();
         range.selectNodeContents(element);
         range.collapse(false);
@@ -133,6 +135,7 @@ class StandardInputAdapter extends InputAdapter {
 
       try {
         const range = selection.getRangeAt(0);
+        range.deleteContents();
         const textNode = document.createTextNode(char);
         range.insertNode(textNode);
         range.setStartAfter(textNode);

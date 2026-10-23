@@ -59,8 +59,8 @@ class PasteTyper {
         if (request.speed !== undefined) {
           this.typingSpeed = request.speed;
         }
-        // startTyping resolves once typing has started (target found, focused,
-        // cleared); report the real outcome so the popup can show "no input
+        // startTyping resolves once typing has started (target found and focused);
+        // report the real outcome so the popup can show "no input
         // field found" instead of a false success.
         this.startTyping(request.text, request.targetElement)
           .then(() => sendResponse({success: true}))
@@ -411,9 +411,8 @@ class PasteTyper {
         await this.currentAdapter.focus(targetElement);
         debug.log('[PasteTyper] Focused element, activeElement:', document.activeElement.tagName);
         
-        // Google Docs 不清空内容，只移动光标
-        await this.currentAdapter.clear(targetElement);
-        debug.log('[PasteTyper] Cleared/prepared element');
+        // Start inserts at the restored caret/selection. Clearing is an explicit
+        // resetTyping action, never part of starting a session.
 
         // 开始逐字输入（不等待完成，异步执行）
         this.continueTyping().catch(err => {
