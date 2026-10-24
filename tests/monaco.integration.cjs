@@ -292,9 +292,13 @@ const server = http.createServer((req,res)=>{
   await failedPage.reload();
   await worker.evaluate(tabId=>frameRouter.prepare(tabId),failedTab);
   await failedPage.locator('#outside').click();
+  await failedPage.locator('#outside').evaluate(el => {
+    el.setSelectionRange(el.value.length, el.value.length);
+    document.dispatchEvent(new Event('selectionchange'));
+  });
   await worker.evaluate(tabId=>frameRouter.route(tabId,{action:'startTyping',text:'OK',speed:10,typoChance:0}),failedTab);
   await failedPage.waitForFunction(()=>document.querySelector('#outside').value.includes('OK'));
-  assert.equal(await failedPage.locator('#outside').inputValue(),'OK');
+  assert.equal(await failedPage.locator('#outside').inputValue(),'OUTSIDEOK');
   console.log('PASS real Chrome null-probe regression: explicit refresh requirement, then standard input typing recovers');
   await failedPage.close();
 

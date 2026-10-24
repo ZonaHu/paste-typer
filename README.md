@@ -64,6 +64,9 @@ git clone https://github.com/ZonaHu/paste-typer.git
 
 **Popup** — click the toolbar icon, load from clipboard or type text, click an input field on the page, hit Start.
 
+Start inserts at your caret or replaces only selected text, preserving the rest
+of the field. **Clear entire field** explicitly deletes all content in the selected field.
+
 **Right-click menu** — copy text, right-click the target field, choose "Paste as typed text".
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
