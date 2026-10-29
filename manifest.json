@@ -9,8 +9,7 @@
     "storage",
     "contextMenus",
     "scripting",
-    "clipboardRead",
-    "webNavigation"
+    "clipboardRead"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": {

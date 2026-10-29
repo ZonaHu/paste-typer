@@ -36,11 +36,10 @@ function setup() {
       async set(value) { writes.push(value); }
     } },
     permissions: { contains: async () => true },
-    scripting: { executeScript: async () => [{ result: { hasTyper: true, hasFloating: true, legacyBridge: false } }] },
-    webNavigation: { getAllFrames: async () => [
-      { frameId: 0, documentId: 'parent', url: 'https://parent.test/' },
-      { frameId: 7, documentId: 'editor', url: 'https://editor.test/' }
-    ] },
+    scripting: { executeScript: async ({ target }) => target.allFrames ? [
+      { frameId: 0, documentId: 'parent', result: { url: 'https://parent.test/', embeddedUrls: ['https://editor.test/'] } },
+      { frameId: 7, documentId: 'editor', result: { url: 'https://editor.test/', embeddedUrls: [] } }
+    ] : [{ result: { hasTyper: true, hasFloating: true, legacyBridge: false } }] },
     tabs: { sendMessage: async (tabId, message, target) => {
       if (message.action === 'getTargetInfo') return { hasTarget: target.frameId === 7,
         changedAt: target.frameId === 7 ? 100 : 0, isTyping: false };

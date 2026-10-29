@@ -120,7 +120,9 @@ class FloatingUIController {
     try {
       return await chrome.runtime.sendMessage({ action: 'ptRoute', message });
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: /Could not establish connection|Receiving end does not exist/.test(error.message)
+        ? 'Paste Typer lost its connection. Refresh this page and reopen the extension.'
+        : error.message };
     }
   }
 
