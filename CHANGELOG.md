@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.2 — 2026-10-29
+
+Paste Typer no longer requires the browsing-history permission added in 1.1. Existing installations that Chrome already paused may still need to be re-enabled once in the extension manager.
+
+### 🧰 Fixes & Housekeeping
+- **Updates and embedded editors** — Discover accessible frames through the existing scripting permission, so future updates do not request `webNavigation`. Per-site access remains available for embedded editors whose iframe URL is visible from an accessible page. ([#18](https://github.com/ZonaHu/paste-typer/pull/18))
+- **Connection recovery** — Replace Chrome's raw “Receiving end does not exist” error with steps to refresh the page and re-enable the extension if needed. ([#18](https://github.com/ZonaHu/paste-typer/pull/18))
+
+Validated with 27 unit checks, real Chrome input and floating-panel tests, and a cross-origin Monaco 0.57 editor. An editor nested inside an inaccessible cross-origin iframe may require access to its parent site before it can be discovered.
+
+**Full Changelog**: https://github.com/ZonaHu/paste-typer/compare/v1.1.1...v1.1.2
+
 ## v1.1.1 — 2026-10-23
 
 Paste Typer now preserves existing field content when starting a typing session. Place the caret to insert text, or select a range to replace only that text.
