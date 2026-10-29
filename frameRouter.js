@@ -17,7 +17,17 @@ class FrameRouter {
   }
 
   async frames(tabId) {
-    return (await chrome.webNavigation.getAllFrames({ tabId })) || [];
+    // activeTab grants access to the invoked page. Scripting returns only
+    // frames we may actually address, without a browsing-history permission.
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true }, world: 'ISOLATED',
+      func: () => ({ url: location.href,
+        embeddedUrls: Array.from(document.querySelectorAll('iframe[src]'), iframe => iframe.src) })
+    });
+    return (results || []).filter(({ result }) => result && typeof result.url === 'string')
+      .map(({ frameId, documentId, result }) => ({
+        frameId, documentId, url: result.url, embeddedUrls: result.embeddedUrls
+      }));
   }
 
   async ensure(tabId, frameId) {
@@ -77,6 +87,15 @@ class FrameRouter {
     const topOrigin = new URL(top.url).origin;
     const missing = new Set();
     const available = [];
+    for (const frame of frames) {
+      for (const url of frame.embeddedUrls || []) {
+        let origin;
+        try { origin = new URL(url).origin; } catch { continue; }
+        if (!/^https?:/.test(url) || origin === topOrigin || origin === 'null') continue;
+        const pattern = `${origin}/*`;
+        if (!await chrome.permissions.contains({ origins: [pattern] })) missing.add(pattern);
+      }
+    }
     await Promise.all(frames.map(async frame => {
       let origin;
       try { origin = new URL(frame.url).origin; } catch { return; }

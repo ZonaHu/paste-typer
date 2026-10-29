@@ -13,17 +13,21 @@ function setup({ denied = false, running = false, partial = false, legacy = fals
   const session = {};
   const listeners = [];
   const frames = [
-    { frameId: 0, documentId: 'parent', url: 'https://parent.test/' },
+    { frameId: 0, documentId: 'parent', url: 'https://parent.test/',
+      embeddedUrls: ['https://editor.test/', 'https://advert.test/'] },
     { frameId: 7, documentId: 'editor', url: 'https://editor.test/' },
     { frameId: 9, documentId: 'advert', url: 'https://advert.test/' }
   ];
   const chrome = {
     storage: { session: { get: async key => ({ [key]: session[key] }),
       set: async values => Object.assign(session, values) } },
-    webNavigation: { getAllFrames: async () => frames },
     permissions: { contains: async ({ origins }) => !denied && origins[0] !== 'https://advert.test/*' },
     scripting: { executeScript: async ({ target, files, world }) => {
       assert.equal(world, 'ISOLATED');
+      if (target.allFrames) return frames.map(frame => ({ frameId: frame.frameId,
+        documentId: frame.documentId, result: frame.frameId === 0 ||
+        (!denied && frame.frameId !== 9) ? { url: frame.url,
+          embeddedUrls: frame.embeddedUrls || [] } : null }));
       const id = target.frameIds[0];
       if (files) {
         injected.push(id); injectedFiles.push([...files]);
@@ -118,7 +122,7 @@ test('navigation in a frame causes reinjection into its new document', async () 
   const { router, injected, chrome } = setup();
   await router.prepare(1);
   const execute = chrome.scripting.executeScript;
-  chrome.scripting.executeScript = async args => args.func
+  chrome.scripting.executeScript = async args => args.func && !args.target.allFrames
     ? [{ result: { hasTyper: false, hasFloating: false, legacyBridge: false } }] : execute(args);
   await router.prepare(1);
   assert.equal(injected.filter(id => id === 7).length, 2);
@@ -157,7 +161,7 @@ test('a transient null probe is retried without injecting into a loaded frame', 
   const execute = chrome.scripting.executeScript;
   let probes = 0;
   chrome.scripting.executeScript = async args => {
-    if (args.func) return [{ result: ++probes === 1 ? null
+    if (args.func && !args.target.allFrames) return [{ result: ++probes === 1 ? null
       : { hasTyper: true, hasFloating: true, legacyBridge: false } }];
     return execute(args);
   };
@@ -170,7 +174,9 @@ test('missing or malformed probes require refresh without injecting or sending c
   for (const response of [[], [null], [{ result: null }], [{ result: {} }],
     [{ result: { hasTyper: true, hasFloating: true } }]]) {
     const { router, chrome, injected, sent } = setup();
+    const execute = chrome.scripting.executeScript;
     chrome.scripting.executeScript = async args => {
+      if (args.target.allFrames) return execute(args);
       assert.ok(args.func, 'must not reinject when installation state is unknown');
       return response;
     };
@@ -211,7 +217,7 @@ test('a retry that discovers a legacy bridge still blocks typing', async () => {
 test('an unverifiable child installation cannot redirect typing to the parent', async () => {
   const { router, chrome, sent } = setup();
   const execute = chrome.scripting.executeScript;
-  chrome.scripting.executeScript = async args => args.func && args.target.frameIds[0] === 7
+  chrome.scripting.executeScript = async args => args.func && args.target.frameIds?.[0] === 7
     ? [{ result: null }] : execute(args);
   await assert.rejects(router.route(1, { action: 'startTyping', text: 'must not type' }),
     /Reload the extension and refresh/);

@@ -26,7 +26,7 @@ const server = http.createServer((req, res) => {
 (async () => {
   let context;
   try {
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    await new Promise(resolve => server.listen(0, resolve));
     context = await chromium.launchPersistentContext(path.join(scratch, 'profile'), {
       headless: true, channel: 'chrome', ignoreDefaultArgs: ['--disable-extensions'],
       args: ['--enable-unsafe-extension-debugging']
@@ -37,6 +37,15 @@ const server = http.createServer((req, res) => {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const tabId = await worker.evaluate(async () => (await chrome.tabs.query({})).find(t => t.url?.startsWith('http://127.0.0.1:')).id);
+    await page.evaluate(port => {
+      const iframe = document.createElement('iframe');
+      iframe.src = `http://localhost:${port}/`;
+      document.body.appendChild(iframe);
+    }, server.address().port);
+    const discovery = await worker.evaluate(tabId => frameRouter.prepare(tabId), tabId);
+    assert.ok(discovery.missingOrigins.includes(`http://localhost:${server.address().port}/*`));
+    assert.ok(discovery.available.some(frame => frame.frameId === 0));
+    console.log('PASS ungranted embedded site is discoverable without webNavigation permission');
     await worker.evaluate(tabId => frameRouter.prepare(tabId), tabId);
     const route = message => worker.evaluate(({ tabId, message }) => frameRouter.route(tabId, message, 0), { tabId, message });
     const waitDone = async () => {
@@ -91,6 +100,7 @@ const server = http.createServer((req, res) => {
     await panel.locator('#textInput').fill('XYZ');
     await panel.locator('#typoChanceSlider').fill('0');
     await panel.locator('#startTyping').click();
+    await panel.locator('#status').filter({ hasText: 'Typing started!' }).waitFor();
     await waitDone(); await verify('textarea', 'abcXYZghi');
     console.log('PASS floating UI retains selected range');
     await prepare('input');
@@ -100,9 +110,18 @@ const server = http.createServer((req, res) => {
     await popup.locator('#textInput').fill('XYZ');
     await popup.locator('#typoChanceSlider').fill('0');
     await popup.locator('#startTyping').click();
+    await popup.locator('#status').filter({ hasText: 'Typing started!' }).waitFor();
     await waitDone(); await verify('input', 'abcXYZghi');
+    await popup.evaluate(() => {
+      chrome.runtime.sendMessage = async () => {
+        throw new Error('Could not establish connection. Receiving end does not exist.');
+      };
+      document.getElementById('findInputs').disabled = false;
+    });
+    await popup.locator('#findInputs').click();
+    await popup.locator('#status').filter({ hasText: 'Paste Typer lost its connection. Refresh this page' }).waitFor();
     await popup.close();
-    console.log('PASS popup retains selected range');
+    console.log('PASS popup retains selected range and explains lost connection');
     // Context-menu handler dispatches this same frame-scoped start request.
     await prepare('textarea');
     await route({ action: 'startTyping', text: 'XYZ', targetElement: true, typoChance: 0 });

@@ -468,8 +468,20 @@ class PopupController {
       throw new Error('Extension cannot run on this page. Please navigate to a regular website.');
     }
 
-    const response = await chrome.runtime.sendMessage({ action: 'ptRoute', tabId: tab.id, message });
-    if (response && response.success === false) throw new Error(response.error || 'The command failed.');
+    let response;
+    try {
+      response = await chrome.runtime.sendMessage({ action: 'ptRoute', tabId: tab.id, message });
+    } catch (error) {
+      if (!/Could not establish connection|Receiving end does not exist/.test(error.message)) throw error;
+      throw new Error('Paste Typer lost its connection. Refresh this page and reopen the extension. If it still fails, re-enable Paste Typer in Chrome extensions.');
+    }
+    if (!response) throw new Error('Paste Typer is not responding. Reopen the extension and try again.');
+    if (response.success === false) {
+      const error = response.error || 'The command failed.';
+      throw new Error(/Could not establish connection|Receiving end does not exist/.test(error)
+        ? 'Paste Typer lost its connection. Refresh this page and reopen the extension. If it still fails, re-enable Paste Typer in Chrome extensions.'
+        : error);
+    }
     return response;
   }
 

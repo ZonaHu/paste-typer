@@ -131,9 +131,8 @@ Full details in [PRIVACY.md](PRIVACY.md).
 | `activeTab` | Access the focused tab only when you invoke the extension |
 | `storage` | Save your preferences (text, speed, typo rate, UI position) |
 | `contextMenus` | The "Paste as typed text" right-click item |
-| `scripting` | Inject the content script into the active tab on demand |
+| `scripting` | Find accessible frames and inject the content script into the active tab on demand |
 | `clipboardRead` | Read the clipboard when you click "Load from Clipboard" |
-| `webNavigation` | Identify frames in the invoked tab to address the selected editor |
 
 Optional host access is declared for HTTP/HTTPS sites but is requested only for the
 individual embedded site you select. Content scripts are still injected on demand;
@@ -146,6 +145,8 @@ granting access does not install automatic scripts on that site.
 | Problem | Fix |
 |---|---|
 | Nothing happens | Click into an editable field first, then press Start |
+| Extension stopped working after an update | In Chrome's extension manager, re-enable Paste Typer if Chrome paused it for a new permission. Refresh the affected tab, then reopen Paste Typer. |
+| "Receiving end does not exist" | Refresh the affected tab and reopen Paste Typer. If it persists, check that Paste Typer is enabled in Chrome's extension manager. |
 | Clipboard read fails | The browser needs a user gesture — click "Load from Clipboard" directly |
 | Field not detected | Use "Navigate Inputs" to step through editable fields |
 | Speed feels wrong | Adjust the slider in the popup or floating UI |

@@ -41,11 +41,8 @@ The actual field and native selection remain in the page's content script memory
 - `activeTab` — grants temporary access to the focused tab only when you invoke the extension.
 - `storage` — persist the settings listed above.
 - `contextMenus` — add the right-click "Paste as typed text" menu item on editable fields.
-- `scripting` — inject the content script into the active tab on demand when you invoke the extension.
+- `scripting` — inspect accessible frames and inject the content script into the active tab on demand when you invoke the extension. The frame URLs and iframe sources are used to find embedded editors; they are not stored as browsing history.
 - `clipboardRead` — read the clipboard when you click "Load from Clipboard" so its text can be typed. Read only on that action; never transmitted.
-- `webNavigation` — enumerate frame IDs and URLs in the tab where you invoke the
-  extension, so commands can target an embedded editor. No browsing history is
-  recorded, and no navigation events are monitored.
 
 There are no required host permissions. Optional HTTP/HTTPS host permissions allow
 you to grant access to an individual embedded editor's site from the popup. The
