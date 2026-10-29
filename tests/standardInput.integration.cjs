@@ -21,6 +21,10 @@ manifest.host_permissions = ['http://127.0.0.1/*']; // Disposable fixture only.
 fs.writeFileSync(path.join(extension, 'manifest.json'), JSON.stringify(manifest));
 const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'text/html');
+  if (req.url === '/search-like') {
+    res.end('<input type="file" hidden><input type="text" hidden><textarea id="search" name="q"></textarea>');
+    return;
+  }
   res.end('<input id="input"><textarea id="textarea"></textarea><div id="rich" contenteditable="true"></div><textarea id="other">UNTOUCHED</textarea>');
 });
 (async () => {
@@ -132,6 +136,11 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#textarea').inputValue(), '');
     assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
     console.log('PASS explicit Clear still clears selected field');
+    await page.goto(`http://127.0.0.1:${server.address().port}/search-like`);
+    await route({ action: 'startTyping', text: 'XYZ', speed: 10, typoChance: 0, targetElement: true });
+    await waitDone();
+    assert.equal(await page.locator('#search').inputValue(), 'XYZ');
+    console.log('PASS fallback skips file and hidden inputs before visible search field');
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });
   }

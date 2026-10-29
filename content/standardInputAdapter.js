@@ -278,17 +278,7 @@ class StandardInputAdapter extends InputAdapter {
    * 检查元素是否可编辑
    */
   _isEditableElement(element) {
-    if (!element || !element.isConnected || element.closest('#paste-typer-floating-ui')) return false;
-
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      return element.type !== 'hidden' && !element.disabled && !element.readOnly;
-    }
-
-    if (element.contentEditable === 'true' || element.isContentEditable) {
-      return true;
-    }
-
-    return false;
+    return targetTracker.isEditable(element);
   }
 
   /**
@@ -297,7 +287,8 @@ class StandardInputAdapter extends InputAdapter {
   _findBestEditableElement() {
     const inputs = document.querySelectorAll('input, textarea');
     for (const input of inputs) {
-      if (this._isEditableElement(input)) {
+      const rect = input.getBoundingClientRect();
+      if (this._isEditableElement(input) && rect.width > 0 && rect.height > 0) {
         return input;
       }
     }
