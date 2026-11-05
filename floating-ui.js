@@ -19,9 +19,12 @@ class FloatingUIController {
     this.closeBtn = root.getElementById('closeBtn');
     this.header = root.getElementById('header');
     this.status = root.getElementById('status');
+    this.progressInterval = null;
+    this.statusTimeout = null;
 
     this.setupEventListeners();
     this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
+    this.syncTypingState();
   }
 
   setupEventListeners() {
@@ -35,8 +38,7 @@ class FloatingUIController {
     this.typoChanceSlider.addEventListener('input', event => {
       if (event.isTrusted !== true) return;
       const value = parseInt(this.typoChanceSlider.value);
-      const percentage = (value / 100).toFixed(1);
-      this.typoChanceValue.textContent = `${percentage}%`;
+      this.typoChanceValue.textContent = `${value}%`;
       this.saveSettings(event);
     });
 
@@ -96,6 +98,7 @@ class FloatingUIController {
 
     if (response && response.success) {
       this.showStatus('Typing started!', 'success');
+      this.startProgressTracking();
     } else {
       this.showStatus('Failed to start typing' + (response && response.error ? ': ' + response.error : ''), 'error');
     }
@@ -105,6 +108,7 @@ class FloatingUIController {
     if (event?.isTrusted !== true) return;
     const response = await this.sendCommand({ action: 'stopTyping' });
     if (response && response.success) {
+      this.stopProgressTracking();
       this.showStatus('Stopped', 'info');
     } else {
       this.showStatus('Error stopping' + (response && response.error ? ': ' + response.error : ''), 'error');
@@ -114,6 +118,39 @@ class FloatingUIController {
   close(event) {
     if (event?.isTrusted !== true) return;
     this.container.style.display = 'none';
+    this.stopProgressTracking();
+  }
+
+  startProgressTracking() {
+    this.stopProgressTracking();
+    const interval = setInterval(async () => {
+      const response = await this.sendCommand({ action: 'getTypingProgress' });
+      if (this.progressInterval !== interval) return;
+      if (!response || response.success === false) {
+        this.stopProgressTracking();
+        this.showStatus(response?.error || 'Lost connection to typing session. Refresh this page.', 'error');
+      } else if (!response.isTyping) {
+        this.stopProgressTracking();
+        this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
+      } else if (response.isPaused) {
+        this.showStatus('Typing paused', 'info');
+      } else {
+        this.showStatus(`Typing ${response.position} / ${response.total}`, 'info');
+      }
+    }, 500);
+    this.progressInterval = interval;
+  }
+
+  async syncTypingState() {
+    const response = await this.sendCommand({ action: 'getTypingProgress' });
+    if (this.container.style.display === 'none' || this.progressInterval) return;
+    if (response?.isTyping) this.startProgressTracking();
+    else if (response?.error) this.showStatus(response.error, 'error');
+  }
+
+  stopProgressTracking() {
+    if (this.progressInterval) clearInterval(this.progressInterval);
+    this.progressInterval = null;
   }
 
   async sendCommand(message) {
@@ -127,11 +164,12 @@ class FloatingUIController {
   }
 
   showStatus(message, type) {
+    if (this.statusTimeout) clearTimeout(this.statusTimeout);
     this.status.textContent = message;
     this.status.className = `status ${type} show`;
 
     if (type === 'success' || type === 'info') {
-      setTimeout(() => {
+      this.statusTimeout = setTimeout(() => {
         this.status.classList.remove('show');
       }, 3000);
     }
@@ -171,15 +209,14 @@ class FloatingUIController {
 
       if (settings.typoChance !== undefined) {
         this.typoChanceSlider.value = settings.typoChance;
-        const percentage = (parseInt(settings.typoChance) / 100).toFixed(1);
-        this.typoChanceValue.textContent = `${percentage}%`;
+        this.typoChanceValue.textContent = `${parseInt(settings.typoChance)}%`;
       } else {
         this.typoChanceSlider.value = 5;
-        this.typoChanceValue.textContent = '0.5%';
+        this.typoChanceValue.textContent = '5%';
       }
     } else {
       this.typoChanceSlider.value = 5;
-      this.typoChanceValue.textContent = '0.5%';
+      this.typoChanceValue.textContent = '5%';
     }
   }
 }

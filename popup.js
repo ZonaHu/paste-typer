@@ -59,8 +59,7 @@ class PopupController {
     if (this.typoChanceSlider) {
       this.typoChanceSlider.addEventListener('input', () => {
         const value = parseInt(this.typoChanceSlider.value);
-        const percentage = (value / 100).toFixed(1);
-        this.typoChanceValue.textContent = `${percentage}%`;
+        this.typoChanceValue.textContent = `${value}%`;
         this.saveSettings();
       });
     }
@@ -148,7 +147,7 @@ class PopupController {
       this.startButton.disabled = true;
       
       // Get current settings
-      const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.005;
+      const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.05;
       const speed = parseInt(this.speedSlider.value);
 
       const response = await this.sendMessageToTab({
@@ -559,17 +558,16 @@ class PopupController {
         if (this.typoChanceSlider) {
           if (settings.typoChance !== undefined) {
             this.typoChanceSlider.value = settings.typoChance;
-            const percentage = (parseInt(settings.typoChance) / 100).toFixed(1);
-            this.typoChanceValue.textContent = `${percentage}%`;
+            this.typoChanceValue.textContent = `${parseInt(settings.typoChance)}%`;
           } else {
             this.typoChanceSlider.value = 5;
-            this.typoChanceValue.textContent = '0.5%';
+            this.typoChanceValue.textContent = '5%';
           }
         }
       } else {
         if (this.typoChanceSlider) {
           this.typoChanceSlider.value = 5;
-          this.typoChanceValue.textContent = '0.5%';
+          this.typoChanceValue.textContent = '5%';
         }
       }
     });

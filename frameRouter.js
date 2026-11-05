@@ -186,6 +186,11 @@ function simulateMonacoInput(token, text) {
     return { success: false, error: 'The selected Monaco editor is not editable.' };
   }
   const option = name => editor.getOption(api.editor.EditorOption[name]);
+  const selection = editor.getSelection();
+  const before = model.getValue();
+  const start = model.getOffsetAt(selection.getStartPosition());
+  const end = model.getOffsetAt(selection.getEndPosition());
+  const expected = before.slice(0, start) + text + before.slice(end);
   const saved = {
     autoIndent: ['none', 'keep', 'brackets', 'advanced', 'full'][option('autoIndent')],
     autoClosingBrackets: option('autoClosingBrackets'),
@@ -220,7 +225,9 @@ function simulateMonacoInput(token, text) {
       return { success: false, error: 'The editor intercepted the simulated key.' };
     }
     element.dispatchEvent(keyboard('keyup'));
-    return { success: true };
+    return model.getValue() === expected
+      ? { success: true }
+      : { success: false, error: 'The Monaco editor changed or rejected the typed text.' };
   } finally {
     editor.updateOptions(saved);
   }
@@ -232,7 +239,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // popup cannot choose a tab, frame, or document through this message.
   if (!sender.tab || !sender.documentId || !/^https?:|^about:/.test(sender.url || '') ||
       typeof request.token !== 'string' || typeof request.text !== 'string' ||
-      request.text.length === 0 || request.text.length > 2) return;
+      request.text.length === 0 || request.text.length > 32 ||
+      [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(request.text)].length !== 1) return;
   chrome.scripting.executeScript({
     target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
     world: 'MAIN', func: simulateMonacoInput, args: [request.token, request.text]

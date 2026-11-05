@@ -141,6 +141,76 @@ const server = http.createServer((req, res) => {
     await waitDone();
     assert.equal(await page.locator('#search').inputValue(), 'XYZ');
     console.log('PASS fallback skips file and hidden inputs before visible search field');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    for (const field of ['input', 'textarea', 'rich']) {
+      for (const value of ['A😀B', 'e\u0301', '🇨🇦', '👨‍👩‍👧‍👦']) {
+        await prepare(field);
+        await page.evaluate(field => {
+          const el = document.getElementById(field);
+          window.ptInputData = [];
+          el.oninput = event => {
+            window.ptInputData.push(event.data);
+            el.dataset.model = el.value ?? el.textContent;
+          };
+        }, field);
+        await route({ action: 'startTyping', text: value, speed: 10, typoChance: 0, targetElement: true });
+        await waitDone();
+        await verify(field, `abc${value}ghi`);
+        const payloads = await page.evaluate(() => window.ptInputData);
+        assert.deepEqual(payloads, [...new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+          .segment(value)].map(part => part.segment));
+      }
+      console.log(`PASS ${field}: complete Unicode graphemes and UTF-16 caret offsets`);
+    }
+    await prepare('input');
+    await page.locator('#input').evaluate(el => {
+      el.addEventListener('input', () => { el.value = 'rejected'; }, { once: true });
+    });
+    await route({ action: 'startTyping', text: 'XYZ', speed: 10, typoChance: 0, targetElement: true });
+    let rejected;
+    for (let i = 0; i < 100; i++) {
+      rejected = await route({ action: 'getTypingProgress' });
+      if (!rejected.isTyping) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.match(rejected.error, /changed or rejected/);
+    assert.equal(rejected.position, 0);
+    assert.equal(await page.locator('#input').inputValue(), 'rejected');
+    console.log('PASS rejected input stops at first mismatch instead of false completion');
+    await prepare('input');
+    await route({ action: 'toggleFloatingUI' });
+    await panel.locator('#textInput').fill('XYZ');
+    await panel.locator('#typoChanceSlider').fill('0');
+    await page.locator('#input').evaluate(el => {
+      el.addEventListener('input', () => { el.value = 'rejected'; }, { once: true });
+    });
+    await panel.locator('#startTyping').click();
+    await panel.locator('#status').filter({ hasText: 'The page changed or rejected the typed text.' }).waitFor();
+    assert.match(await panel.locator('#status').getAttribute('class'), /error/);
+    console.log('PASS floating UI shows asynchronous typing error');
+    await prepare('input');
+    await route({ action: 'startTyping', text: 'xxxxxxxx', speed: 200, typoChance: 0, targetElement: true });
+    await assert.rejects(route({ action: 'startTyping', text: 'duplicate', targetElement: true }),
+      /already running/);
+    await route({ action: 'stopTyping' });
+    await route({ action: 'startTyping', text: 'NEW', speed: 10, typoChance: 0, targetElement: true });
+    await waitDone();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await verify('input', 'abcNEWghi');
+    console.log('PASS duplicate Start reports error and stopped session cannot leak into restart');
+    await prepare('input');
+    await route({ action: 'startTyping', text: 'abcdefghij', speed: 10, typoChance: 1, targetElement: true });
+    let beforeStop;
+    for (let i = 0; i < 30; i++) {
+      beforeStop = await page.locator('#input').inputValue();
+      if (beforeStop !== 'abcDEFghi') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.notEqual(beforeStop, 'abcDEFghi');
+    await route({ action: 'stopTyping' });
+    await new Promise(resolve => setTimeout(resolve, 450));
+    assert.equal(await page.locator('#input').inputValue(), beforeStop);
+    console.log('PASS Stop during typo correction causes no later field mutation');
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });
   }

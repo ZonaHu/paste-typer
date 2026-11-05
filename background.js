@@ -35,10 +35,15 @@ class BackgroundService {
         try {
           const clipboardText = await this.readClipboard();
           if (clipboardText) {
+            const { pasteTyperSettings } = await chrome.storage.local.get('pasteTyperSettings');
+            const savedRate = Number(pasteTyperSettings?.typoChance);
+            const typoRate = Number.isFinite(savedRate) && savedRate >= 0 && savedRate <= 50
+              ? savedRate : 5;
             await frameRouter.route(tab.id, {
               action: 'startTyping',
               text: clipboardText,
-              targetElement: true
+              targetElement: true,
+              typoChance: typoRate / 100
             }, info.frameId);
           }
         } catch (error) {
