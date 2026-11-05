@@ -25,7 +25,7 @@ const server = http.createServer((req, res) => {
     res.end('<input type="file" hidden><input type="text" hidden><textarea id="search" name="q"></textarea>');
     return;
   }
-  res.end('<input id="input"><textarea id="textarea"></textarea><div id="rich" contenteditable="true"></div><textarea id="other">UNTOUCHED</textarea>');
+  res.end('<input id="input"><input id="email" type="email"><input id="url" type="url"><input id="tel" type="tel"><textarea id="textarea"></textarea><div id="rich" contenteditable="true"></div><textarea id="other">UNTOUCHED</textarea>');
 });
 (async () => {
   let context;
@@ -98,6 +98,37 @@ const server = http.createServer((req, res) => {
       }
       console.log(`PASS ${field}: insertion, selection replacement, model events, unrelated content`);
     }
+    for (const field of ['email', 'url', 'tel']) {
+      await page.locator(`#${field}`).evaluate(el => {
+        el.value = 'abc'; el.focus();
+        el.dataset.model = el.value;
+        el.oninput = () => { el.dataset.model = el.value; };
+      });
+      await route({ action: 'startTyping', text: 'XYZ', speed: 10, typoChance: 0, targetElement: true });
+      await waitDone();
+      await verify(field, 'abcXYZ');
+    }
+    console.log('PASS email/url/tel fields without selection APIs append and notify input');
+    await page.locator('#email').evaluate(el => {
+      el.value = 'abc'; el.focus();
+      el.dataset.model = el.value;
+    });
+    await route({ action: 'startTyping', text: 'abcdefghij', speed: 10, typoChance: 1, targetElement: true });
+    await waitDone();
+    await verify('email', 'abcabcdefghij');
+    console.log('PASS typo correction backspaces in email input without selection API');
+    await prepare('input');
+    await page.locator('#input').evaluate(el => {
+      el.addEventListener('keydown', event => {
+        const start = el.selectionStart; const end = el.selectionEnd;
+        el.value = el.value.slice(0, start) + event.key + el.value.slice(end);
+        el.setSelectionRange(start + event.key.length, start + event.key.length);
+      }, { once: true });
+    });
+    await route({ action: 'startTyping', text: 'X', speed: 10, typoChance: 0, targetElement: true });
+    await waitDone();
+    await verify('input', 'abcXghi');
+    console.log('PASS page-handled keydown does not duplicate inserted character');
     await prepare('textarea');
     await route({ action: 'toggleFloatingUI' });
     const panel = page.locator('#paste-typer-floating-ui');

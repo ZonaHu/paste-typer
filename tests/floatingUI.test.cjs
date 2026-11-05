@@ -138,10 +138,14 @@ test('floating status follows pause and stop without stale polling', async () =>
   assert.equal(state.root.getElementById('status').textContent, 'Stopped');
 });
 
-test('saved typo slider value has the same displayed and engine rate', async () => {
-  const state = setup();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(state.root.getElementById('typoChanceValue').textContent, '5%');
-  await state.emit('startTyping', 'click', true);
-  assert.equal(state.commands[0].message.typoChance, 0.05);
+test('typo slider displays the probability sent to the engine at 0, 5 and 10 percent', async () => {
+  for (const rate of [0, 5, 10]) {
+    const state = setup();
+    await new Promise(resolve => setImmediate(resolve));
+    state.root.getElementById('typoChanceSlider').value = String(rate);
+    await state.emit('typoChanceSlider', 'input', true);
+    assert.equal(state.root.getElementById('typoChanceValue').textContent, `${rate}%`);
+    await state.emit('startTyping', 'click', true);
+    assert.equal(state.commands[0].message.typoChance, rate / 100);
+  }
 });

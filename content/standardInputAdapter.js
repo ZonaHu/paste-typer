@@ -75,6 +75,13 @@ class StandardInputAdapter extends InputAdapter {
     }
 
     const keyInfo = this._getKeyInfo(char);
+    const nativeField = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+    const previousValue = nativeField ? element.value : null;
+    const hasSelection = nativeField && typeof element.selectionStart === 'number';
+    const start = hasSelection ? element.selectionStart : previousValue?.length;
+    const end = hasSelection ? element.selectionEnd : start;
+    const expectedValue = nativeField
+      ? previousValue.substring(0, start) + char + previousValue.substring(end) : null;
 
     const keydownEvent = new KeyboardEvent('keydown', {
       key: char,
@@ -118,14 +125,16 @@ class StandardInputAdapter extends InputAdapter {
     }
 
     // 实际插入字符
-    let expectedValue;
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
-      const value = element.value;
-      expectedValue = value.substring(0, start) + char + value.substring(end);
-      this._setNativeValue(element, expectedValue);
-      element.selectionStart = element.selectionEnd = start + char.length;
+    let expectedAfterInput = expectedValue;
+    if (nativeField) {
+      // Some editors apply simulated keys themselves. Avoid inserting twice.
+      if (element.value !== previousValue && element.value !== expectedValue) {
+        return { success: false, error: 'The page changed or rejected the typed text. Check the input and try again.' };
+      }
+      if (element.value === previousValue) {
+        this._setNativeValue(element, expectedValue);
+        if (hasSelection) element.selectionStart = element.selectionEnd = start + char.length;
+      }
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
       
@@ -151,15 +160,15 @@ class StandardInputAdapter extends InputAdapter {
       } catch (e) {
         document.execCommand('insertText', false, char);
       }
-      expectedValue = element.textContent;
+      expectedAfterInput = element.textContent;
     }
 
     element.dispatchEvent(inputEvent);
     element.dispatchEvent(keyupEvent);
 
-    const actualValue = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA'
+    const actualValue = nativeField
       ? element.value : element.textContent;
-    if (actualValue !== expectedValue) {
+    if (actualValue !== expectedAfterInput) {
       return { success: false, error: 'The page changed or rejected the typed text. Check the input and try again.' };
     }
 
@@ -177,15 +186,16 @@ class StandardInputAdapter extends InputAdapter {
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const currentValue = element.value;
       if (currentValue.length > 0) {
-        const start = element.selectionStart;
-        const end = element.selectionEnd;
+        const hasSelection = typeof element.selectionStart === 'number';
+        const start = hasSelection ? element.selectionStart : currentValue.length;
+        const end = hasSelection ? element.selectionEnd : start;
         
         if (start === end && start > 0) {
           this._setNativeValue(element, currentValue.substring(0, start - 1) + currentValue.substring(start));
-          element.selectionStart = element.selectionEnd = start - 1;
+          if (hasSelection) element.selectionStart = element.selectionEnd = start - 1;
         } else if (start !== end) {
           this._setNativeValue(element, currentValue.substring(0, start) + currentValue.substring(end));
-          element.selectionStart = element.selectionEnd = start;
+          if (hasSelection) element.selectionStart = element.selectionEnd = start;
         }
       }
       
