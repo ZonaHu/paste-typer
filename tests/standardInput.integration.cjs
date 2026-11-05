@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
 (async () => {
   let context;
   try {
-    await new Promise(resolve => server.listen(0, resolve));
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     context = await chromium.launchPersistentContext(path.join(scratch, 'profile'), {
       headless: true, channel: 'chrome', ignoreDefaultArgs: ['--disable-extensions'],
       args: ['--enable-unsafe-extension-debugging']

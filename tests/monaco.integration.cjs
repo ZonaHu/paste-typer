@@ -40,7 +40,7 @@ const server = http.createServer((req,res)=>{
  const profile=path.join(scratch,'profile');
  let context;
  try{
-  context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chrome',ignoreDefaultArgs:['--disable-extensions'],args:['--enable-unsafe-extension-debugging']});
+  context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chrome',ignoreDefaultArgs:['--disable-extensions'],args:['--enable-unsafe-extension-debugging','--host-resolver-rules=MAP localhost 127.0.0.1']});
   const cdp=await context.browser().newBrowserCDPSession();
   const extensionInfo=await cdp.send('Extensions.loadUnpacked',{path:extension});
   const worker=context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', {timeout:5000});
