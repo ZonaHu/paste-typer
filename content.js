@@ -17,6 +17,7 @@ class PasteTyper {
     this.targetElement = null;
     this.currentAdapter = null; // 当前使用的适配器
     this.lastError = null;
+    this.deliveryVerified = true;
     this.typingSpeed = 50; // Base delay between characters in ms
     this.speedVariation = 20; // Random variation in typing speed
     this.pauseChance = 0.1; // Chance of pausing during typing
@@ -106,7 +107,8 @@ class PasteTyper {
           total: this.currentGraphemes.length,
           isTyping: this.isTyping,
           isPaused: this.isPaused,
-          error: this.lastError
+          error: this.lastError,
+          deliveryVerified: this.deliveryVerified
         });
       } else if (request.action === 'startInputNavigation') {
         this.startInputNavigation();
@@ -401,6 +403,8 @@ class PasteTyper {
         
         this.isTyping = true;
         this.lastError = null;
+        // Canvas editors do not expose accepted document text to this adapter.
+        this.deliveryVerified = !(this.currentAdapter instanceof GoogleDocsAdapter);
         this.isPaused = false;
         this.currentText = text.replace(/\r\n?/g, '\n');
         this.currentGraphemes = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' })
@@ -817,7 +821,9 @@ class PasteTyper {
     
     // Select all content programmatically
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      element.setSelectionRange(0, element.value.length);
+      if (typeof element.selectionStart === 'number') {
+        element.setSelectionRange(0, element.value.length);
+      }
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
       const range = document.createRange();
@@ -895,7 +901,9 @@ class PasteTyper {
         const currentValue = element.value;
         if (currentValue.length > 0) {
           this._setNativeValue(element, currentValue.slice(0, -1));
-          element.setSelectionRange(element.value.length, element.value.length);
+          if (typeof element.selectionStart === 'number') {
+            element.setSelectionRange(element.value.length, element.value.length);
+          }
         }
       } else if (element.contentEditable === 'true' || element.isContentEditable) {
         const currentText = element.textContent || '';
@@ -1472,7 +1480,7 @@ class PasteTyper {
     inputs.forEach(input => {
       const rect = input.getBoundingClientRect();
       // Only highlight visible elements
-      if (rect.width > 0 && rect.height > 0) {
+      if (targetTracker.isEditable(input) && rect.width > 0 && rect.height > 0) {
         input.classList.add('paste-typer-highlight');
         count++;
       }
@@ -1535,7 +1543,7 @@ class PasteTyper {
     const inputs = document.querySelectorAll(selectors.join(', '));
     this.availableInputs = Array.from(inputs).filter(input => {
       const rect = input.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0; // Only visible inputs
+      return targetTracker.isEditable(input) && rect.width > 0 && rect.height > 0;
     });
     
     this.selectedInputIndex = 0;
@@ -1583,6 +1591,7 @@ class PasteTyper {
   selectCurrentInput() {
     if (this.selectedInputIndex >= 0 && this.selectedInputIndex < this.availableInputs.length) {
       const selectedInput = this.availableInputs[this.selectedInputIndex];
+      if (!targetTracker.isEditable(selectedInput)) return false;
       
       // Store as target element BEFORE stopping navigation
       this.targetElement = selectedInput;

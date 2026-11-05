@@ -226,17 +226,22 @@ class PopupController {
   }
 
   startProgressTracking() {
+    this.stopProgressTracking();
     this.progressContainer.style.display = 'block';
-    this.progressInterval = setInterval(async () => {
+    const interval = setInterval(async () => {
       try {
         const response = await this.sendMessageToTab({ action: 'getTypingProgress' });
+        if (this.progressInterval !== interval) return;
         if (response) {
           const { position, total, isTyping, isPaused } = response;
           
           if (!isTyping) {
             this.stopProgressTracking();
             this._setControls(false);
-            this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
+            const unverified = response.deliveryVerified === false;
+            this.showStatus(response.error || (unverified
+              ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete'),
+            response.error ? 'error' : unverified ? 'info' : 'success');
             return;
           }
           
@@ -251,9 +256,13 @@ class PopupController {
           }
         }
       } catch (error) {
-        debug.log('Progress tracking error:', error);
+        if (this.progressInterval !== interval) return;
+        this.stopProgressTracking();
+        this._setControls(false);
+        this.showStatus('Lost connection to typing session: ' + error.message, 'error');
       }
     }, 500);
+    this.progressInterval = interval;
   }
 
   stopProgressTracking() {

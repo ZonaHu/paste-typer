@@ -127,6 +127,17 @@ test('floating status reports an asynchronous typing failure and keeps it visibl
   assert.match(state.root.getElementById('status').className, /error/);
 });
 
+test('floating status does not claim verified completion for a canvas editor', async () => {
+  const state = setup();
+  await state.emit('startTyping', 'click', true);
+  state.setProgress({ position: 2, total: 2, isTyping: false, isPaused: false,
+    error: null, deliveryVerified: false });
+  await state.tick();
+  assert.equal(state.root.getElementById('status').textContent,
+    'Keystrokes sent. Check the document for missing text.');
+  assert.match(state.root.getElementById('status').className, /info/);
+});
+
 test('floating status follows pause and stop without stale polling', async () => {
   const state = setup();
   await state.emit('startTyping', 'click', true);

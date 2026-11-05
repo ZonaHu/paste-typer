@@ -131,7 +131,10 @@ class FloatingUIController {
         this.showStatus(response?.error || 'Lost connection to typing session. Refresh this page.', 'error');
       } else if (!response.isTyping) {
         this.stopProgressTracking();
-        this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
+        const unverified = response.deliveryVerified === false;
+        this.showStatus(response.error || (unverified
+          ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete'),
+        response.error ? 'error' : unverified ? 'info' : 'success');
       } else if (response.isPaused) {
         this.showStatus('Typing paused', 'info');
       } else {

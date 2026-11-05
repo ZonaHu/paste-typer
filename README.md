@@ -96,8 +96,12 @@ are not supported yet. Chrome 106 or newer is required.
 | `<input>` (text, email, password, search, url, tel) | ✅ |
 | `<textarea>` | ✅ |
 | `contenteditable` | ✅ |
-| Google Docs / Slides canvas | ✅ |
+| Google Docs / Slides canvas | Keystrokes sent; check the document |
 | Monaco textarea-based editor (including permitted iframes) | ✅ |
+
+Google Docs and Slides do not expose accepted canvas text to the extension, so
+their completion message cannot confirm the final document contents. Check the
+document after typing; background-tab reliability remains under investigation.
 
 ## How it works
 

@@ -25,7 +25,7 @@ const server = http.createServer((req, res) => {
     res.end('<input type="file" hidden><input type="text" hidden><textarea id="search" name="q"></textarea>');
     return;
   }
-  res.end('<input id="input"><input id="email" type="email"><input id="url" type="url"><input id="tel" type="tel"><textarea id="textarea"></textarea><div id="rich" contenteditable="true"></div><textarea id="other">UNTOUCHED</textarea>');
+  res.end('<input id="input"><input id="email" type="email"><input id="url" type="url"><input id="tel" type="tel"><textarea id="textarea"></textarea><div id="rich" contenteditable="true"></div><textarea id="other">UNTOUCHED</textarea><input type="text" disabled><input type="text" readonly><div contenteditable="false">LOCKED</div>');
 });
 (async () => {
   let context;
@@ -117,6 +117,15 @@ const server = http.createServer((req, res) => {
     await waitDone();
     await verify('email', 'abcabcdefghij');
     console.log('PASS typo correction backspaces in email input without selection API');
+    await route({ action: 'resetTyping' });
+    assert.equal(await page.locator('#email').inputValue(), '');
+    assert.equal(await page.locator('#email').getAttribute('data-model'), '');
+    console.log('PASS Clear works in email input without selection API');
+    const navigation = await route({ action: 'startInputNavigation' });
+    assert.equal(navigation.count, 7);
+    await route({ action: 'stopInputNavigation' });
+    assert.equal((await route({ action: 'findAndHighlightInputs' })).count, 7);
+    console.log('PASS navigation skips disabled, read-only and non-editable controls');
     await prepare('input');
     await page.locator('#input').evaluate(el => {
       el.addEventListener('keydown', event => {
@@ -147,6 +156,31 @@ const server = http.createServer((req, res) => {
     await popup.locator('#startTyping').click();
     await popup.locator('#status').filter({ hasText: 'Typing started!' }).waitFor();
     await waitDone(); await verify('input', 'abcXYZghi');
+    await popup.evaluate(() => {
+      chrome.runtime.sendMessage = async request => {
+        if (request.message?.action === 'startTyping') return { success: true };
+        if (request.message?.action === 'getTypingProgress') return {
+          position: 1, total: 1, isTyping: false, isPaused: false,
+          error: null, deliveryVerified: false
+        };
+        return { success: true };
+      };
+    });
+    await popup.locator('#startTyping').click();
+    await popup.locator('#status').filter({ hasText: 'Keystrokes sent. Check the document for missing text.' }).waitFor();
+    assert.match(await popup.locator('#status').getAttribute('class'), /info/);
+    console.log('PASS popup does not claim verified canvas completion');
+    await popup.evaluate(() => {
+      chrome.runtime.sendMessage = async request => {
+        if (request.message?.action === 'startTyping') return { success: true };
+        throw new Error('Could not establish connection. Receiving end does not exist.');
+      };
+    });
+    await popup.locator('#startTyping').click();
+    await popup.locator('#status').filter({ hasText: 'Lost connection to typing session: Paste Typer lost its connection.' }).waitFor();
+    assert.equal(await popup.locator('#startTyping').isVisible(), true);
+    assert.equal(await popup.locator('#stopTyping').isVisible(), false);
+    console.log('PASS popup progress connection loss is visible and restores Start');
     await popup.evaluate(() => {
       chrome.runtime.sendMessage = async () => {
         throw new Error('Could not establish connection. Receiving end does not exist.');
@@ -242,6 +276,28 @@ const server = http.createServer((req, res) => {
     await new Promise(resolve => setTimeout(resolve, 450));
     assert.equal(await page.locator('#input').inputValue(), beforeStop);
     console.log('PASS Stop during typo correction causes no later field mutation');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.evaluate(async () => {
+      const iframe = document.createElement('iframe');
+      iframe.className = 'docs-texteventtarget-iframe';
+      iframe.srcdoc = '<body contenteditable="true"></body>';
+      document.body.appendChild(iframe);
+      await new Promise(resolve => iframe.addEventListener('load', resolve, { once: true }));
+      window.ptCanvasKeys = '';
+      iframe.contentDocument.addEventListener('textInput', event => {
+        window.ptCanvasKeys += event.data;
+      });
+    });
+    await route({ action: 'getTypingProgress' });
+    await worker.evaluate(async tabId => chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] }, world: 'ISOLATED',
+      func: () => { GoogleDocsAdapter.detect = () => true; }
+    }), tabId);
+    await route({ action: 'startTyping', text: 'A😀B', speed: 10, typoChance: 0, targetElement: true });
+    await waitDone();
+    assert.equal(await page.evaluate(() => window.ptCanvasKeys), 'A😀B');
+    assert.equal((await route({ action: 'getTypingProgress' })).deliveryVerified, false);
+    console.log('PASS canvas adapter sends complete graphemes and marks delivery unverified in fixture');
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });
   }
