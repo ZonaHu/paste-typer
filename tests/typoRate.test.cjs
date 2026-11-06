@@ -9,7 +9,7 @@ function load(context, file) {
 }
 
 function controls(kind, savedRate) {
-  const elements = new Map(), messages = [], writes = [];
+  const elements = new Map(), messages = [], writes = [], listeners = [], storageListeners = [];
   const root = { getElementById(id) {
     if (!elements.has(id)) elements.set(id, {
       value: id === 'textInput' ? 'source' : id === 'speedSlider' ? '50' : '5',
@@ -18,13 +18,25 @@ function controls(kind, savedRate) {
     });
     return elements.get(id);
   }, addEventListener() {} };
-  const settings = savedRate === undefined ? {} : { typoChance: savedRate };
-  const chrome = { storage: { local: {
+  let settings = { text: 'source', ...(savedRate === undefined ? {} : { typoChance: savedRate }) };
+  const chrome = { storage: { onChanged: { addListener(fn) { storageListeners.push(fn); } }, local: {
     get(keys, callback) { const result = { pasteTyperSettings: settings }; callback?.(result); return Promise.resolve(result); },
-    async set(value) { writes.push(value.pasteTyperSettings); }
-  } }, runtime: { async sendMessage(request) { messages.push(request.message); return { success: true }; } } };
-  const context = vm.createContext({ chrome, document: root, console, setTimeout() {} });
+    async set(value) {
+      const oldValue = settings; settings = value.pasteTyperSettings; writes.push(settings);
+      storageListeners.forEach(fn => fn({ pasteTyperSettings: { oldValue, newValue: settings } }, 'local'));
+    }
+  } }, runtime: { onMessage: { addListener(fn) { listeners.push(fn); } }, getURL: p => `chrome-extension://test/${p}`,
+    async sendMessage(request) {
+      if (request.action === 'ptSettings') return new Promise(resolve => listeners.forEach(fn =>
+        fn(request, { url: 'chrome-extension://test/popup.html' }, resolve)));
+      if (request.message.action === 'getTypingProgress') return { state: 'idle', isTyping: false, position: 0, total: 0 };
+      messages.push(request.message); return { success: true };
+    } } };
+  const context = vm.createContext({ chrome, document: root, console, setTimeout() {}, clearTimeout() {},
+    setInterval() { return 1; }, clearInterval() {} });
   load(context, 'content/typoRate.js');
+  // Load optional settings infrastructure when testing alongside the privacy fix.
+  if (fs.existsSync(path.join(__dirname, '../settings.js'))) load(context, 'settings.js');
   load(context, kind === 'popup' ? 'popup.js' : 'floating-ui.js');
   let controller;
   if (kind === 'popup') {
@@ -34,7 +46,8 @@ function controls(kind, savedRate) {
       startButton: 'startTyping', stopButton: 'stopTyping', pauseButton: 'pauseTyping', resetButton: 'resetTyping',
       loadClipboardButton: 'loadClipboard', openFloatingUIButton: 'openFloatingUI', findInputsButton: 'findInputs',
       prevInputButton: 'prevInput', nextInputButton: 'nextInput', selectInputButton: 'selectInput',
-      exitNavigationButton: 'exitNavigation' })) controller[property] = root.getElementById(id);
+      exitNavigationButton: 'exitNavigation', rememberText: 'rememberText', deleteSavedText: 'deleteSavedText' })) controller[property] = root.getElementById(id);
+    controller.textVersion = controller.sourceRevision = 0;
     controller.sendMessageToTab = async message => { messages.push(message); return { success: true }; };
     controller.showStatus = controller.startProgressTracking = controller._setControls = () => {};
     controller.setupEventListeners();
@@ -53,7 +66,7 @@ async function contextMenu(rate) {
   const chrome = {
     contextMenus: { onClicked: { addListener(fn) { onClick = fn; } } },
     commands: { onCommand: { addListener() {} } },
-    runtime: { onInstalled: { addListener() {} } },
+    runtime: { onInstalled: { addListener() {} }, onMessage: { addListener() {} } },
     tabs: { query: async () => [{ id: 7 }] },
     scripting: { executeScript: async () => [{ result: 'source' }] },
     storage: { local: { get: async () => ({ pasteTyperSettings: { typoChance: rate } }) } }
@@ -88,10 +101,11 @@ async function makesTypo(probability, sample) {
   let backspaces = 0;
   typer.typoChance = probability;
   typer.currentText = 'abcdef';
+  typer.currentGraphemes = ['a', 'b', 'c', 'd', 'e', 'f'];
   typer.isTyping = true;
   typer.sleep = async () => {};
   typer.currentAdapter = {
-    async typeCharacter() { typer.isTyping = false; return { success: true }; },
+    async typeCharacter(element, char) { if (char === 'a') typer.isTyping = false; return { success: true }; },
     async simulateBackspace() { backspaces++; return { success: true }; }
   };
   await typer.continueTyping();
