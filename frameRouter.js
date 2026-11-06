@@ -1,6 +1,7 @@
 // All tab messages are addressed to one frame; broadcasting would start typing
 // in unrelated inputs and allow multiple frames to race when answering.
 const PT_CONTENT_FILES = [
+  'content/typoRate.js',
   'content/inputAdapter.js', 'content/targetTracker.js',
   'content/googleDocsAdapter.js', 'content/standardInputAdapter.js',
   'content/monacoAdapter.js', 'content/adapterManager.js', 'floating-ui.js', 'content.js'
@@ -49,6 +50,7 @@ class FrameRouter {
             try {
               const hasTyper = typeof pasteTyper !== 'undefined';
               return { hasTyper, hasFloating: typeof FloatingUIController !== 'undefined',
+                hasTypoRate: typeof PTTypoRate !== 'undefined',
                 legacyBridge: hasTyper && typeof pasteTyper.setupFloatingUIBridge === 'function' };
             } catch {
               // A failed top-level const initializer leaves an uninitialized
@@ -72,9 +74,12 @@ class FrameRouter {
         error.code = 'PT_REFRESH_REQUIRED';
         throw error;
       }
-      if (!state.hasTyper || !state.hasFloating) {
-        const files = state.hasTyper ? ['floating-ui.js']
-          : PT_CONTENT_FILES.filter(file => file !== 'floating-ui.js' || !state.hasFloating);
+      if (!state.hasTyper || !state.hasFloating || !state.hasTypoRate) {
+        const files = PT_CONTENT_FILES.filter(file => {
+          if (file === 'content/typoRate.js') return !state.hasTypoRate;
+          if (file === 'floating-ui.js') return !state.hasFloating;
+          return !state.hasTyper;
+        });
         await chrome.scripting.executeScript({
           target: { tabId, frameIds: [frameId] }, world: 'ISOLATED', files
         });
