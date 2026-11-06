@@ -109,6 +109,19 @@ PT_TEST_DEPS=/path/to/test-deps node tests/settings.integration.cjs
 
 It covers Remember text, saved-source deletion, reloads, popup/floating consistency,
 disabled-persistence typing, and forged page clicks.
+For split code inputs, run the sibling-group regression with the same setup:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/splitCodeInput.integration.cjs
+```
+
+It checks six `maxlength="1"` sibling inputs with page or adapter focus advance,
+partial starts, native Undo/Redo, typo correction, Stop, and group boundaries.
+It also verifies page-owned edits, canceled input, deferred value rejection, and
+inputs hidden by ancestor opacity or content visibility.
+The adapter recognizes contiguous visible, editable text/tel/password inputs;
+separators, ordinary controls and different parents end the group. Overflow stops
+with an error instead of writing outside that group.
 
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
