@@ -788,6 +788,18 @@ class PasteTyper {
       debug.log('Using best editable element:', elementToClear);
     }
 
+    // Block-based editors can interpret synthetic Ctrl+A/Delete as a page-wide
+    // operation. A contenteditable block is not proof that Clear is confined to
+    // that block; Notion can include the page title in its selection.
+    const hostname = (globalThis.location?.hostname || '').toLowerCase();
+    const notionPage = hostname === 'notion.so' || hostname.endsWith('.notion.so') ||
+      hostname === 'notion.site' || hostname.endsWith('.notion.site');
+    if (elementToClear && (notionPage || (elementToClear.isContentEditable &&
+        (elementToClear.closest('.notion-page-content, [data-block-id]') ||
+          elementToClear.querySelector('[contenteditable], [data-block-id]'))))) {
+      throw new Error('Clear is unavailable in this block-based editor because it could delete other blocks or the page title. Select and delete the intended text using the editor.');
+    }
+
     if (elementToClear && (fromAdapter || this.isEditableElement(elementToClear))) {
       // Check if this is a Monaco editor or similar complex editor
       const isMonacoEditor = this.isMonacoEditor(elementToClear);
