@@ -48,8 +48,9 @@ function setup(kind) {
   };
   const context = vm.createContext({ chrome, root, console, setTimeout() {},
     document: { getElementById: root.getElementById, addEventListener() {} } });
-  for (const file of ['settings.js', 'popup.js', 'floating-ui.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
+  for (const file of ['content/typoRate.js', 'settings.js', 'popup.js', 'floating-ui.js']) {
+    const source = path.join(__dirname, '..', file);
+    if (fs.existsSync(source)) vm.runInContext(fs.readFileSync(source, 'utf8'), context);
   }
   // Skip unrelated frame discovery; use the real settings initialization and
   // event listeners from both controllers against the production worker queue.
