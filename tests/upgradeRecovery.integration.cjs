@@ -139,7 +139,7 @@ function installCurrentCopy() {
       await route({ action: 'toggleFloatingUI' }, targetId);
       await target.locator('#paste-typer-floating-ui').locator('#startTyping').waitFor();
       assert.equal(await target.locator('#other').inputValue(), 'UNTOUCHED');
-      console.log(`PASS ${kind} page: Navigate, Start, Stop, Floating UI`);
+      console.log(`PASS ${kind} page: Navigate, Start, Stop, Floating UI opens`);
     }
     console.log('ENVIRONMENT', JSON.stringify({ chrome: context.browser().version(), os: os.platform(), release: os.release(), from: oldRef, to: manifest.version }));
     console.log('NOT TESTED: real Web Store update; permission-disabled installation recovery.');

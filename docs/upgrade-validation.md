@@ -18,7 +18,9 @@ Observed on 2026-11-06 UTC (2026-11-05 in Toronto):
 - Chrome **156.0.8078.80**, macOS **Darwin 25.5.0**: two consecutive runs passed.
   On the already-open page, Navigate found both fields and the existing `OLD`
   value stayed unchanged. Refreshed and newly opened pages passed Navigate,
-  Start, Stop and Floating UI checks; an unrelated field stayed unchanged.
+  Start and Stop checks, and the Floating UI panel opened with its Start button
+  present; an unrelated field stayed unchanged. Panel Start/Stop were not invoked
+  by this reload harness.
 - **Not tested:** a real Web Store upgrade and recovery of a permission-disabled
   1.1.0 installation. The local result must not be substituted for either check.
 
@@ -56,7 +58,7 @@ before updating. Record the actual version and enabled state from
 `chrome://extensions`; avoid reinstalling or clearing settings first because that
 would erase the existing-user condition.
 
-| Installation and page | Navigate | Start / exact output | Stop | Floating UI | Status |
+| Installation and page | Navigate | Start / exact output | Stop | Floating panel opens | Status |
 | --- | --- | --- | --- | --- | --- |
 | Store 1.1.1 → 1.1.2, already-open page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
 | Same Store upgrade, refreshed page | Pending | Pending | Pending | Pending | Needs an existing Store installation |

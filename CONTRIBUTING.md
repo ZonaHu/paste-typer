@@ -102,7 +102,8 @@ PT_TEST_DEPS=/path/to/test-deps node tests/upgradeRecovery.integration.cjs
 ```
 
 It needs full Git history for historical commit `64198da`. It checks an unpacked
-1.1.1 → 1.1.2 reload, preserved storage, refreshed/new-page controls and Stop.
+1.1.1 → 1.1.2 reload, preserved storage, refreshed/new-page routed controls, Stop,
+and Floating UI panel opening (not panel Start/Stop interaction).
 This is not a Web Store upgrade or permission-disabled installation test. See
 [the recorded evidence and live acceptance matrix](docs/upgrade-validation.md)
 before claiming existing-user recovery.
