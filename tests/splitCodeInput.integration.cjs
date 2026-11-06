@@ -62,11 +62,11 @@ const server = http.createServer((req, res) => {
         }, args: [action] });
       return result;
     }, { tabId, action });
-    const prepare = async ({ autoAdvance = false, start = 0, initial = '' } = {}) => {
+    const prepare = async ({ autoAdvance = false, start = 0, initial = '', focus = true } = {}) => {
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       await worker.evaluate(tabId => frameRouter.prepare(tabId), tabId);
       await isolated('configure');
-      await page.evaluate(({ autoAdvance, start, initial }) => {
+      await page.evaluate(({ autoAdvance, start, initial, focus }) => {
         window.events = [];
         const inputs = [...document.querySelectorAll('#code input')];
         inputs.forEach((input, i) => {
@@ -82,16 +82,24 @@ const server = http.createServer((req, res) => {
             });
           }
         });
-        inputs[start].focus();
-        inputs[start].setSelectionRange(0, inputs[start].value.length);
-        document.dispatchEvent(new Event('selectionchange'));
-      }, { autoAdvance, start, initial });
+        if (focus) {
+          inputs[start].focus();
+          inputs[start].setSelectionRange(0, inputs[start].value.length);
+          document.dispatchEvent(new Event('selectionchange'));
+        }
+      }, { autoAdvance, start, initial, focus });
     };
     const type = async (text, options = {}) => {
       assert.equal((await route({ action: 'startTyping', text, speed: 5, typoChance: 0,
         targetElement: true, ...options })).success, true);
       return waitDone();
     };
+    await prepare({ focus: false });
+    assert.equal(await page.evaluate(() => document.activeElement.tagName), 'BODY');
+    assert.equal((await type('483920')).error, null);
+    assert.deepEqual(await values(), ['4', '8', '3', '9', '2', '0']);
+    assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
+    console.log('PASS engine fallback chooses the split-code adapter without a preselected box');
     for (const autoAdvance of [false, true]) {
       await prepare({ autoAdvance });
       assert.equal((await type('483920')).error, null);
@@ -220,9 +228,29 @@ const server = http.createServer((req, res) => {
         await page.evaluate(property => document.getElementById('digit0').addEventListener('input', () => {
           document.getElementById('code').style[property] = property === 'opacity' ? '0' : 'hidden';
         }), property);
-        assert.match((await type('483920')).error, /no longer available/);
+        const state = await type('483920');
+        assert.match(state.error, /did not accept/);
+        assert.equal(state.position, 0);
         assert.deepEqual(await values(), ['4', '', '', '', '', '']);
       });
+    }
+    for (const stage of ['input', 'keyup']) {
+      for (const unavailable of ['removed', 'disabled', 'hidden']) {
+        await checkReview(`${stage} microtask ${unavailable} final box rejects completion`, async () => {
+          await prepare();
+          await page.evaluate(({ stage, unavailable }) => {
+            const input = document.getElementById('digit5');
+            input.addEventListener(stage, () => queueMicrotask(() => {
+              if (unavailable === 'removed') input.remove();
+              else input[unavailable] = true;
+            }));
+          }, { stage, unavailable });
+          const state = await type('483920');
+          assert.match(state.error, /did not accept/);
+          assert.equal(state.position, 5);
+          assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
+        });
+      }
     }
     assert.deepEqual(reviewFailures, []);
   } finally {

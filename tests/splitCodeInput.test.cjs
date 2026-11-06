@@ -115,3 +115,20 @@ test('a box becoming disabled stops the captured run without skipping ahead', as
   assert.equal((await active.typeCharacter(inputs[0], '8')).success, false);
   assert.deepEqual(inputs.map(input => input.value), ['4', '', '']);
 });
+
+for (const stage of ['input', 'keyup']) {
+  for (const unavailable of ['removed', 'disabled', 'hidden']) {
+    test(`${stage} microtask ${unavailable} box rejects final acceptance`, async () => {
+      const { group, adapter } = setup();
+      const inputs = group({}, {});
+      const active = adapter(inputs[0]);
+      await active.focus(inputs[0]);
+      await active.typeCharacter(inputs[0], '4');
+      inputs[1].addEventListener(stage, () => queueMicrotask(() => {
+        if (unavailable === 'removed') inputs[1].isConnected = false;
+        else inputs[1][unavailable] = true;
+      }));
+      assert.equal((await active.typeCharacter(inputs[0], '8')).success, false);
+    });
+  }
+}

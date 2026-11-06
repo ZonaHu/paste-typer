@@ -396,6 +396,9 @@ class PasteTyper {
         }
 
         const targetElement = targetResult.element;
+        // Fallback discovery can resolve a specialized field after the initial
+        // adapter choice, such as a code box when no field was preselected.
+        this.currentAdapter = adapterManager.getAdapter(targetElement);
         debug.log('[PasteTyper] Target element:', targetElement.tagName, targetElement.className);
         debug.log('[PasteTyper] Element contentEditable:', targetElement.contentEditable);
         debug.log('[PasteTyper] Element isContentEditable:', targetElement.isContentEditable);

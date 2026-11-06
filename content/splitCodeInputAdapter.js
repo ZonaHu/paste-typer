@@ -104,7 +104,7 @@ class SplitCodeInputAdapter extends StandardInputAdapter {
       // Framework input/keyup handlers may restore a rejected value in a
       // microtask; report that rejection before advancing to another box.
       await Promise.resolve();
-      return edited && element.value === expected;
+      return edited && this._available(element) && element.value === expected;
     } finally {
       element.removeEventListener('input', observeInput);
     }
