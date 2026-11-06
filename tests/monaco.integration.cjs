@@ -54,6 +54,13 @@ const server = http.createServer((req,res)=>{
       files:PT_CONTENT_FILES.filter(file=>file!=='floating-ui.js')}),tabId);
   }
   await prepare();
+  const navigation = await route({ action: 'startInputNavigation' });
+  const navigationTargets = await editor.locator('.paste-typer-input-available').evaluateAll(nodes => nodes.map(node => node.closest('.monaco-editor')?.parentElement.id));
+  console.log('Monaco navigation candidates:', navigationTargets);
+  assert.deepEqual(navigationTargets, ['one', 'two']);
+  assert.equal(navigation.count, 2);
+  assert.equal((await route({ action: 'selectCurrentInput' })).success, true);
+  console.log('PASS Navigate finds visible Monaco editors and selects their input surface');
   await worker.evaluate(()=>{
     globalThis.testRoutedCommands=[];
     const original=frameRouter.route.bind(frameRouter);

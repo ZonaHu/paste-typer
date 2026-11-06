@@ -23,6 +23,11 @@ class FrameRouter {
       target: { tabId, allFrames: true }, world: 'ISOLATED',
       func: () => ({ url: location.href,
         embeddedUrls: Array.from(document.querySelectorAll('iframe[src]'), iframe => iframe.src) })
+    }).catch(error => {
+      if (/extensions gallery cannot be scripted/i.test(error.message)) {
+        throw new Error('Chrome does not allow Paste Typer to run on the Chrome Web Store. Open a regular website and try again.');
+      }
+      throw error;
     });
     return (results || []).filter(({ result }) => result && typeof result.url === 'string')
       .map(({ frameId, documentId, result }) => ({

@@ -83,6 +83,12 @@ enters through keyboard/text-input events, not clipboard paste or direct model
 edits. Newer Monaco configurations using EditContext rather than a textarea
 are not supported yet. Chrome 106 or newer is required.
 
+**Navigate** — starts at the field you last selected, or the first writable
+field when none is selected. It skips hidden, disabled, read-only and inert
+controls, and lists each rich-text editing area once. If the page changes while
+you navigate, unavailable fields are skipped and Select verifies the field again.
+Chrome's protected pages, including the Chrome Web Store, cannot be used.
+
 ## Supported fields
 
 | Field type | Supported |
@@ -144,6 +150,7 @@ granting access does not install automatic scripts on that site.
 
 | Problem | Fix |
 |---|---|
+| Chrome Web Store | Chrome blocks extensions on the Web Store. Open a regular website, or serve the demo page locally, to use Navigate and typing. |
 | Nothing happens | Click into an editable field first, then press Start |
 | Extension stopped working after an update | In Chrome's extension manager, re-enable Paste Typer if Chrome paused it for a new permission. Refresh the affected tab, then reopen Paste Typer. |
 | "Receiving end does not exist" | Refresh the affected tab and reopen Paste Typer. If it persists, check that Paste Typer is enabled in Chrome's extension manager. |

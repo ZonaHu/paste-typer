@@ -316,7 +316,7 @@ class PopupController {
         this.findInputsButton.style.color = '#fff';
         this.findInputsButton.style.borderColor = '#ef4444';
         
-        this.updateNavigationStatus(1, response.count);
+        this.updateNavigationStatus(response.selectedIndex + 1, response.count);
         this.showStatus(`Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
       } else if (response && response.canvasEditor) {
         this.showStatus('Google Docs/Slides: double-click a text box to edit it, then press Start (no need to navigate).', 'info');
@@ -337,7 +337,7 @@ class PopupController {
         this.updateNavigationStatus(response.selectedIndex + 1, response.total);
       }
     } catch (error) {
-      console.error('Navigation error:', error);
+      this.showStatus('Navigation error: ' + error.message, 'error');
     }
   }
 
@@ -348,7 +348,7 @@ class PopupController {
         this.updateNavigationStatus(response.selectedIndex + 1, response.total);
       }
     } catch (error) {
-      console.error('Navigation error:', error);
+      this.showStatus('Navigation error: ' + error.message, 'error');
     }
   }
 
