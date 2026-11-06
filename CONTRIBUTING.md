@@ -214,6 +214,20 @@ script without its floating controller. This verifies dependency repair without
 class redeclarations. The harness also checks settings persistence after panel
 recreation and removes partial markup when controller initialization fails.
 
+For existing-user upgrade and receiver-recovery changes, run the isolated reload
+harness with the same test-only Playwright setup:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/upgradeRecovery.integration.cjs
+```
+
+It needs full Git history for historical commit `64198da`. It checks an unpacked
+upgrade with preserved settings, already-open/refreshed/new-page routed controls,
+Stop, and trusted Floating UI Start.
+This is not a Web Store upgrade or permission-disabled installation test. See
+[the recorded evidence and live acceptance matrix](docs/upgrade-validation.md)
+before claiming existing-user recovery.
+
 The Start fallback regression covers non-text, hidden, disabled, read-only and
 inert controls before a visible textarea:
 
