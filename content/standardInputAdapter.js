@@ -70,196 +70,143 @@ class StandardInputAdapter extends InputAdapter {
    * 在标准元素中输入单个字符
    */
   async typeCharacter(element, char) {
-    if (!this._isEditableElement(element)) {
-      return { success: false, error: 'The selected input is no longer editable. Click another input and try again.' };
-    }
-
-    const nativeField = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
-    const previousValue = nativeField ? element.value : element.textContent;
-    const selection = nativeField ? null : window.getSelection();
-    const hasSelection = nativeField && typeof element.selectionStart === 'number';
-    let start = hasSelection ? element.selectionStart : previousValue.length;
-    let end = hasSelection ? element.selectionEnd : start;
-    let range;
-    if (!nativeField) {
-      range = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : document.createRange();
-      if (!selection.rangeCount || !element.contains(range.startContainer) || !element.contains(range.endContainer)) {
-        range.selectNodeContents(element);
-        range.collapse(false);
-      }
-      // Capture text offsets before page key handlers can mutate the document.
-      const prefix = document.createRange();
-      prefix.selectNodeContents(element);
-      prefix.setEnd(range.startContainer, range.startOffset);
-      start = prefix.toString().length;
-      prefix.setEnd(range.endContainer, range.endOffset);
-      end = prefix.toString().length;
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    const expectedValue = previousValue.substring(0, start) + char + previousValue.substring(end);
-    const mismatch = () => ({ success: false,
-      error: 'The page changed or rejected the typed text. Check the input and try again.' });
-    const readValue = () => nativeField ? element.value : element.textContent;
-    const keyInfo = this._getKeyInfo(char);
-    const keyboard = (type, code) => new KeyboardEvent(type, {
-      key: char, code: keyInfo.code, keyCode: code, which: code,
-      bubbles: true, cancelable: true
-    });
-    const keydownAccepted = element.dispatchEvent(keyboard('keydown', keyInfo.keyCode));
-    const keypressAccepted = element.dispatchEvent(keyboard('keypress', keyInfo.charCode));
-    if (!this._isEditableElement(element)) return mismatch();
-    const afterKeys = readValue();
-    if (afterKeys !== previousValue && afterKeys !== expectedValue) return mismatch();
-    if (afterKeys === previousValue) {
-      if (!keydownAccepted || !keypressAccepted) return mismatch();
-      if (nativeField) {
-        this._setNativeValue(element, expectedValue);
-        if (hasSelection) element.selectionStart = element.selectionEnd = start + 1;
-      } else {
-        try {
-          range.deleteContents();
-          const textNode = document.createTextNode(char);
-          range.insertNode(textNode);
-          range.setStartAfter(textNode);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        } catch {
-          document.execCommand('insertText', false, char);
-        }
-      }
-    }
-    // A page may handle the key itself. Its accepted insertion must not be doubled.
-    element.dispatchEvent(new InputEvent('input', {
-      data: char, inputType: 'insertText', bubbles: true, cancelable: true
-    }));
-    element.dispatchEvent(keyboard('keyup', keyInfo.keyCode));
-    // Framework handlers can apply their response in the event's microtask queue.
-    await Promise.resolve();
-    return this._isEditableElement(element) && readValue() === expectedValue ? { success: true } : mismatch();
+    return this._edit(element, char);
   }
 
-  /**
-   * 模拟退格键（标准输入）
-   */
   async simulateBackspace(element) {
-    if (!element) {
-      return { success: false, error: '目标元素无效' };
-    }
+    return this._edit(element, '', true);
+  }
 
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const currentValue = element.value;
-      let expected = currentValue;
-      if (currentValue.length > 0) {
-        const start = element.selectionStart;
-        const end = element.selectionEnd;
-        
-        if (start === end && start > 0) {
-          expected = currentValue.substring(0, start - 1) + currentValue.substring(start);
-          this._setNativeValue(element, expected);
-          element.selectionStart = element.selectionEnd = start - 1;
-        } else if (start !== end) {
-          expected = currentValue.substring(0, start) + currentValue.substring(end);
-          this._setNativeValue(element, expected);
-          element.selectionStart = element.selectionEnd = start;
-        }
-      }
-      
-      const backspaceDown = new KeyboardEvent('keydown', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceDown);
-      
-      const inputEvent = new InputEvent('input', {
-        inputType: 'deleteContentBackward',
-        bubbles: true,
-        cancelable: false
-      });
-      element.dispatchEvent(inputEvent);
-      
-      const backspaceUp = new KeyboardEvent('keyup', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceUp);
-      
-      await this._sleep(10);
-      await Promise.resolve();
-      if (!element.isConnected || element.value !== expected) {
-        return { success: false, error: 'The page changed or rejected backspace. Typing stopped.' };
-      }
-      return { success: true };
+  // Keep page-owned edits and our fallback in one sequence. A canceled hook,
+  // moved caret or protected target must never be followed by a forced edit.
+  async _edit(element, char, deleting = false) {
+    const mismatch = () => ({ success: false, error: deleting
+      ? 'The page changed or rejected backspace. Typing stopped.'
+      : 'The page changed or rejected the typed text. Check the input and try again.' });
+    const available = () => this._isEditableElement(element) && !element.matches(':disabled') &&
+      !element.closest('[inert]') && document.activeElement === element;
+    if (!available()) return mismatch();
+    const nativeField = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+    const readValue = () => nativeField ? element.value : element.textContent;
+    const previousValue = readValue();
+    const original = this._editSelection(element, nativeField);
+    if (!original) return mismatch();
+    const markup = nativeField ? null : element.innerHTML;
+    let from = original.start, to = original.end;
+    if (deleting) {
+      // The Unicode change supplies this helper; the independent adapter also
+      // works without it, using the existing UTF-16 deletion convention.
+      [from, to] = typeof PTGraphemes !== 'undefined'
+        ? PTGraphemes.deletionRange(previousValue, from, to)
+        : [from === to ? Math.max(0, from - 1) : from, to];
     }
-    
-    if (element.contentEditable === 'true' || element.isContentEditable) {
-      const selection = window.getSelection();
-      const currentValue = element.textContent;
-      let expected = currentValue;
-      
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        
-        if (range.collapsed && range.startOffset > 0) {
-          range.setStart(range.startContainer, range.startOffset - 1);
-        }
-        if (!range.collapsed) {
-          const prefix = document.createRange();
-          prefix.selectNodeContents(element);
-          prefix.setEnd(range.startContainer, range.startOffset);
-          const start = prefix.toString().length;
-          prefix.setEnd(range.endContainer, range.endOffset);
-          const end = prefix.toString().length;
-          expected = currentValue.substring(0, start) + currentValue.substring(end);
+    const expectedValue = previousValue.slice(0, from) + char + previousValue.slice(to);
+    const expectedCaret = from + char.length;
+    const keyInfo = deleting ? { code: 'Backspace', keyCode: 8, charCode: 8 } : this._getKeyInfo(char);
+    const keyboard = type => new KeyboardEvent(type, {
+      key: deleting ? 'Backspace' : char, code: keyInfo.code,
+      keyCode: type === 'keypress' ? keyInfo.charCode : keyInfo.keyCode,
+      which: type === 'keypress' ? keyInfo.charCode : keyInfo.keyCode,
+      bubbles: true, cancelable: true
+    });
+    let sawInput = false, mutated = false, keydownSent = false, succeeded = false;
+    const observeInput = () => { sawInput = true; };
+    const observer = nativeField ? null : new MutationObserver(() => { mutated = true; });
+    observer?.observe(element, { childList: true, characterData: true, attributes: true, subtree: true });
+    element.addEventListener('input', observeInput, true);
+    const atExpectedCaret = selected => selected && selected.start === expectedCaret && selected.end === expectedCaret;
+    const accepted = () => available() && readValue() === expectedValue &&
+      atExpectedCaret(this._editSelection(element, nativeField));
+    const sameRange = selected => selected && selected.start === original.start && selected.end === original.end &&
+      (nativeField ? selected.direction === original.direction :
+        selected.startNode === original.startNode && selected.startOffset === original.startOffset &&
+        selected.endNode === original.endNode && selected.endOffset === original.endOffset);
+    const inspect = () => {
+      if (!available()) return 'changed';
+      const selected = this._editSelection(element, nativeField);
+      const changedEdit = expectedValue !== previousValue || original.start !== original.end ||
+        expectedCaret !== original.start || sawInput;
+      if (changedEdit && readValue() === expectedValue && atExpectedCaret(selected)) return 'handled';
+      if (readValue() === previousValue && sameRange(selected) && !sawInput &&
+          (nativeField || element.innerHTML === markup && !mutated && !observer.takeRecords().length)) return 'unchanged';
+      return 'changed';
+    };
+    const dispatch = async event => {
+      const allowed = element.dispatchEvent(event);
+      await Promise.resolve();
+      const state = inspect();
+      // A hook can implement a literal edit and cancel the browser default.
+      // It owns that attempt, including the input event it already emitted.
+      if (state === 'handled') return true;
+      if (!allowed || state !== 'unchanged') throw new Error('Input intercepted');
+      return false;
+    };
+    try {
+      keydownSent = true;
+      let handled = await dispatch(keyboard('keydown'));
+      if (!handled && !deleting) handled = await dispatch(keyboard('keypress'));
+      if (!handled) handled = await dispatch(new InputEvent('beforeinput', {
+        data: deleting ? null : char, inputType: deleting ? 'deleteContentBackward' : 'insertText',
+        bubbles: true, cancelable: true
+      }));
+      if (!handled) {
+        if (inspect() !== 'unchanged') throw new Error('Input target changed');
+        if (nativeField) {
+          this._setNativeValue(element, expectedValue);
+          if (original.hasSelection) element.setSelectionRange(expectedCaret, expectedCaret);
+        } else {
+          const range = document.createRange();
+          const first = this._textPoint(element, from), last = this._textPoint(element, to);
+          range.setStart(first.node, first.offset); range.setEnd(last.node, last.offset);
           range.deleteContents();
+          if (!deleting) {
+            const node = document.createTextNode(char); range.insertNode(node); range.setStartAfter(node);
+          }
+          range.collapse(true);
+          const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
         }
-        
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
       }
-      
-      const backspaceDown = new KeyboardEvent('keydown', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceDown);
-      
-      const inputEvent = new InputEvent('input', {
-        inputType: 'deleteContentBackward',
-        bubbles: true,
-        cancelable: false
-      });
-      element.dispatchEvent(inputEvent);
-      
-      const backspaceUp = new KeyboardEvent('keyup', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceUp);
-      
-      await this._sleep(10);
+      if (!sawInput) element.dispatchEvent(new InputEvent('input', {
+        data: deleting ? null : char, inputType: deleting ? 'deleteContentBackward' : 'insertText', bubbles: true
+      }));
       await Promise.resolve();
-      if (!element.isConnected || element.textContent !== expected) {
-        return { success: false, error: 'The page changed or rejected backspace. Typing stopped.' };
-      }
-      return { success: true };
+      succeeded = accepted();
+    } catch {
+      // No retry: an intercepted or partly accepted edit may already be visible.
+    } finally {
+      if (keydownSent) { element.dispatchEvent(keyboard('keyup')); await Promise.resolve(); }
+      observer?.disconnect();
+      element.removeEventListener('input', observeInput, true);
     }
-    
-    return { success: false, error: '不支持的元素类型' };
+    return succeeded && accepted() ? { success: true } : mismatch();
+  }
+
+  _editSelection(element, nativeField) {
+    if (nativeField) {
+      const hasSelection = typeof element.selectionStart === 'number';
+      return { hasSelection, start: hasSelection ? element.selectionStart : element.value.length,
+        end: hasSelection ? element.selectionEnd : element.value.length, direction: element.selectionDirection };
+    }
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return null;
+    const prefix = document.createRange(); prefix.selectNodeContents(element);
+    prefix.setEnd(range.startContainer, range.startOffset); const start = prefix.toString().length;
+    prefix.setEnd(range.endContainer, range.endOffset); const end = prefix.toString().length;
+    return { start, end, startNode: range.startContainer, startOffset: range.startOffset,
+      endNode: range.endContainer, endOffset: range.endOffset };
+  }
+
+  // Map text offsets back into the existing DOM without flattening its markup.
+  _textPoint(element, offset) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (offset <= node.data.length) return { node, offset };
+      offset -= node.data.length;
+    }
+    return { node: element, offset: element.childNodes.length };
   }
 
   /**

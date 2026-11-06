@@ -127,6 +127,98 @@ editor.getModel().setEOL(monaco.editor.EndOfLineSequence.CRLF);editor.setPositio
         });
       }
     }
+    const directEdit = (field, operation = 'type') => worker.evaluate(async ({ tabId, field, operation }) => {
+      const [injected] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] },
+        world: 'ISOLATED', func: async ({ field, operation }) => {
+          const adapter = new StandardInputAdapter(), element = document.getElementById(field);
+          return operation === 'type' ? adapter.typeCharacter(element, 'X') : adapter.simulateBackspace(element);
+        }, args: [{ field, operation }] });
+      return injected.result;
+    }, { tabId, field, operation });
+    const installHook = (field, stage, effect, operation, defer = false) => page.evaluate(({ field, stage, effect, operation, defer }) => {
+      const element = document.getElementById(field);
+      window.editEvents = [];
+      for (const type of ['keydown', 'keypress', 'beforeinput', 'input', 'keyup']) {
+        element.addEventListener(type, event => editEvents.push({ type, data: event.data, inputType: event.inputType }));
+      }
+      element.addEventListener(stage, event => {
+        if (effect === 'cancel' || effect === 'page-edit-cancel') event.preventDefault();
+        const apply = () => {
+          if (effect.startsWith('page-edit')) {
+            if (element.isContentEditable) document.execCommand(operation === 'type' ? 'insertText' : 'delete', false, operation === 'type' ? 'X' : null);
+            else {
+              const start = element.selectionStart, end = element.selectionEnd;
+              element.value = element.value.slice(0, start) + (operation === 'type' ? 'X' : '') + element.value.slice(end);
+              element.setSelectionRange(start + (operation === 'type' ? 1 : 0), start + (operation === 'type' ? 1 : 0));
+              element.dispatchEvent(new InputEvent('input', { data: operation === 'type' ? 'X' : null,
+                inputType: operation === 'type' ? 'insertText' : 'deleteContentBackward', bubbles: true }));
+            }
+          } else if (effect === 'focus') document.getElementById('other').focus();
+          else if (effect === 'caret') {
+            if (element.isContentEditable) {
+              const range = document.createRange(); range.selectNodeContents(element); range.collapse(true);
+              getSelection().removeAllRanges(); getSelection().addRange(range);
+            } else element.setSelectionRange(0, 0);
+          } else if (effect === 'protected') {
+            if (element.isContentEditable) element.contentEditable = 'false';
+            else element.readOnly = true;
+          } else if (effect === 'disabled') element.disabled = true;
+        };
+        if (defer) queueMicrotask(apply); else apply();
+      }, { once: true });
+    }, { field, stage, effect, operation, defer });
+    const valueOf = field => page.locator('#' + field).evaluate(element => element.value ?? element.textContent);
+    for (const field of ['input', 'textarea', 'rich']) {
+      for (const operation of ['type', 'backspace']) {
+        for (const stage of operation === 'type' ? ['keydown', 'keypress', 'beforeinput'] : ['keydown', 'beforeinput']) {
+          await check(`${field} ${operation} honors canceled ${stage} without editing`, async () => {
+            await prepare(field); await installHook(field, stage, 'cancel', operation);
+            const result = await directEdit(field, operation);
+            assert.equal(result.success, false);
+            assert.equal(await valueOf(field), 'abcDEFghi');
+            assert.equal(await page.evaluate(() => editEvents.filter(event => event.type === 'input').length), 0);
+          });
+          for (const effect of ['page-edit', 'page-edit-cancel']) await check(`${field} ${operation} accepts one page-owned ${stage} edit (${effect})`, async () => {
+            await prepare(field); await installHook(field, stage, effect, operation);
+            const result = await directEdit(field, operation);
+            assert.equal(result.success, true, result.error);
+            assert.equal(await valueOf(field), operation === 'type' ? 'abcXghi' : 'abcghi');
+            assert.equal(await page.evaluate(() => editEvents.filter(event => event.type === 'input').length), 1);
+          });
+        }
+        for (const stage of ['keydown', 'beforeinput']) for (const effect of ['focus', 'caret', 'protected']) {
+          await check(`${field} ${operation} stops before editing after ${stage} ${effect} redirect`, async () => {
+            await prepare(field); await installHook(field, stage, effect, operation, true);
+            const result = await directEdit(field, operation);
+            assert.equal(result.success, false);
+            assert.equal(await valueOf(field), 'abcDEFghi');
+            assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
+          });
+        }
+        for (const stage of ['input', 'keyup']) for (const effect of ['focus', 'caret', 'protected']) {
+          await check(`${field} ${operation} rejects queued ${stage} ${effect} changes after delivery`, async () => {
+            await prepare(field); await installHook(field, stage, effect, operation, true);
+            assert.equal((await directEdit(field, operation)).success, false);
+            assert.equal(await valueOf(field), operation === 'type' ? 'abcXghi' : 'abcghi');
+          });
+        }
+      }
+      await check(`${field} refuses backspace in an already protected target`, async () => {
+        await prepare(field);
+        await page.locator('#' + field).evaluate(element => {
+          if (element.isContentEditable) element.contentEditable = 'false'; else element.readOnly = true;
+        });
+        assert.equal((await directEdit(field, 'backspace')).success, false);
+        assert.equal(await valueOf(field), 'abcDEFghi');
+      });
+    }
+    for (const stage of ['initial', 'keydown', 'beforeinput', 'input', 'keyup']) await check(`disabled target refuses correction at ${stage}`, async () => {
+      await prepare('input');
+      if (stage === 'initial') await page.locator('#input').evaluate(element => { element.disabled = true; });
+      else await installHook('input', stage, 'disabled', 'backspace', true);
+      assert.equal((await directEdit('input', 'backspace')).success, false);
+      assert.equal(await valueOf('input'), ['input', 'keyup'].includes(stage) ? 'abcghi' : 'abcDEFghi');
+    });
     for (const field of ['email', 'url', 'tel']) await check(field + ' appends without selection API errors', async () => {
       await prepare(field); const result = await type('X');
       assert.equal(result.error, null);
