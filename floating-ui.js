@@ -15,12 +15,16 @@ class FloatingUIController {
     this.typoChanceValue = root.getElementById('typoChanceValue');
     this.startButton = root.getElementById('startTyping');
     this.stopButton = root.getElementById('stopTyping');
+    this.pauseButton = root.getElementById('pauseTyping');
+    this.progressInterval = null;
+    this.sessionState = 'idle';
     this.loadClipboardButton = root.getElementById('loadClipboard');
     this.closeBtn = root.getElementById('closeBtn');
     this.header = root.getElementById('header');
     this.status = root.getElementById('status');
 
     this.setupEventListeners();
+    this.syncTypingState();
     this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
   }
 
@@ -47,6 +51,8 @@ class FloatingUIController {
     this.startButton.addEventListener('click', event => {
       this.startTyping(event);
     });
+
+    this.pauseButton.addEventListener('click', event => this.togglePause(event));
 
     this.stopButton.addEventListener('click', event => {
       this.stopTyping(event);
@@ -96,6 +102,7 @@ class FloatingUIController {
 
     if (response && response.success) {
       this.showStatus('Typing started!', 'success');
+      this.startProgressTracking();
     } else {
       this.showStatus('Failed to start typing' + (response && response.error ? ': ' + response.error : ''), 'error');
     }
@@ -114,6 +121,58 @@ class FloatingUIController {
   close(event) {
     if (event?.isTrusted !== true) return;
     this.container.style.display = 'none';
+    this.stopProgressTracking();
+  }
+
+  async togglePause(event) {
+    if (event?.isTrusted !== true) return;
+    const response = await this.sendCommand({ action: this.sessionState === 'paused' ? 'resumeTyping' : 'pauseTyping' });
+    if (!response?.success) this.showStatus(response?.error || 'Could not change pause state', 'error');
+    await this.syncTypingState();
+  }
+
+  renderTypingState(progress) {
+    const state = progress.state || (progress.isTyping ? progress.isPaused ? 'paused' : 'running' : 'idle');
+    const changed = state !== this.sessionState || progress.sessionId !== this.lastSessionId;
+    this.sessionState = state;
+    this.lastSessionId = progress.sessionId;
+    const active = state === 'running' || state === 'paused';
+    this.startButton.disabled = active || state === 'stopping';
+    this.stopButton.disabled = !active;
+    this.pauseButton.disabled = !active;
+    this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
+    if (!changed && state !== 'running') return;
+    if (state === 'error') this.showStatus(progress.error || 'Typing failed', 'error');
+    else if (state === 'stopped') this.showStatus('Stopped', 'info');
+    else if (state === 'stopping') this.showStatus('Stopping...', 'info');
+    else if (state === 'completed') this.showStatus(progress.deliveryVerified === false
+      ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete',
+    progress.deliveryVerified === false ? 'info' : 'success');
+    else if (state === 'paused') this.showStatus('Typing paused', 'info');
+    else if (state === 'running') this.showStatus(`Typing ${progress.position} / ${progress.total}`, 'info');
+  }
+
+  async syncTypingState() {
+    if (this.container.style.display === 'none') return;
+    const response = await this.sendCommand({ action: 'getTypingProgress' });
+    if (this.container.style.display === 'none') return;
+    if (!response || response.success === false) {
+      this.stopProgressTracking();
+      this.showStatus(response?.error || 'Lost connection to typing session. Refresh this page.', 'error');
+      return;
+    }
+    this.renderTypingState(response);
+    if (!this.progressInterval) this.startProgressTracking();
+  }
+
+  startProgressTracking() {
+    if (this.progressInterval) return;
+    this.progressInterval = setInterval(() => this.syncTypingState(), 250);
+  }
+
+  stopProgressTracking() {
+    if (this.progressInterval) clearInterval(this.progressInterval);
+    this.progressInterval = null;
   }
 
   async sendCommand(message) {
@@ -127,11 +186,12 @@ class FloatingUIController {
   }
 
   showStatus(message, type) {
+    clearTimeout(this.statusTimeout);
     this.status.textContent = message;
     this.status.className = `status ${type} show`;
 
     if (type === 'success' || type === 'info') {
-      setTimeout(() => {
+      this.statusTimeout = setTimeout(() => {
         this.status.classList.remove('show');
       }, 3000);
     }

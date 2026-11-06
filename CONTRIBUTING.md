@@ -105,6 +105,13 @@ stop running/paused sessions. The Node tests invoke the registered command
 listener and verify cross-origin frame routing. Physical key binding and OS
 shortcut conflicts still need a manual check at `chrome://extensions/shortcuts`.
 
+For session controls, also run `node --test tests/sessionState.test.cjs` and
+`PT_TEST_DEPS=/path/to/test-deps node tests/sessionState.integration.cjs`.
+These cover cancellation during target discovery, Stop acknowledgement after an
+in-flight edit, Pause during typo correction, popup reopen, and cross-UI state
+after Stop/Clear and back-to-back short sessions. Both visible UIs poll the same
+session ID and phase; Stop invalidates delayed work before acknowledging.
+
 ## Code style
 
 Plain JavaScript, no build tooling, no dependencies. Match the surrounding style.

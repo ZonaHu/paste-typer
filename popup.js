@@ -35,6 +35,7 @@ class PopupController {
     this.navigationStatus = document.getElementById('navigationStatus');
     
     this.progressInterval = null;
+    this.sessionState = 'idle';
     this.isNavigationMode = false;
     this.tabId = null;
     this.frameOrigin = document.getElementById('frameOrigin');
@@ -186,7 +187,6 @@ class PopupController {
     try {
       await this.sendMessageToTab({ action: 'stopTyping' });
       this.showStatus('Typing stopped', 'info');
-      this.stopProgressTracking();
       this._setControls(false);
     } catch (error) {
       this.showStatus('Error stopping: ' + error.message, 'error');
@@ -195,66 +195,48 @@ class PopupController {
 
   async togglePause() {
     try {
-      const isPaused = this.pauseButton.textContent.includes('Resume');
-      
-      if (isPaused) {
-        // Currently paused, so resume
-        await this.sendMessageToTab({ action: 'resumeTyping' });
-        this.showStatus('Typing resumed', 'info');
-        this.pauseButton.textContent = 'Pause';
-        this.pauseButton.style.backgroundColor = '#f59e0b';
-      } else {
-        // Currently typing, so pause
-        await this.sendMessageToTab({ action: 'pauseTyping' });
-        this.showStatus('Typing paused', 'info');
-        this.pauseButton.textContent = 'Resume';
-        this.pauseButton.style.backgroundColor = '#16a34a';
-      }
-    } catch (error) {
-      this.showStatus('Error toggling pause: ' + error.message, 'error');
-    }
+      await this.sendMessageToTab({ action: this.sessionState === 'paused' ? 'resumeTyping' : 'pauseTyping' });
+      await this.syncTypingState();
+    } catch (error) { this.showStatus('Error toggling pause: ' + error.message, 'error'); }
   }
 
   async resetTyping() {
     try {
       await this.sendMessageToTab({ action: 'resetTyping' });
       this.showStatus('All text in the selected field was cleared', 'info');
-      this.stopProgressTracking();
       this._setControls(false);
     } catch (error) {
       this.showStatus('Error resetting: ' + error.message, 'error');
     }
   }
 
+  renderTypingState(progress) {
+    const state = progress.state || (progress.isTyping ? progress.isPaused ? 'paused' : 'running' : 'idle');
+    const changed = state !== this.sessionState || progress.sessionId !== this.lastSessionId;
+    this.sessionState = state;
+    this.lastSessionId = progress.sessionId;
+    const active = state === 'running' || state === 'paused';
+    this._setControls(active);
+    this.startButton.disabled = state === 'stopping';
+    this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
+    this.pauseButton.style.backgroundColor = state === 'paused' ? '#16a34a' : '#f59e0b';
+    this.progressContainer.style.display = active ? 'block' : 'none';
+    this.progressBar.style.width = `${progress.total ? progress.position / progress.total * 100 : 0}%`;
+    this.progressText.textContent = `${progress.position} / ${progress.total}`;
+    this.progressBar.style.backgroundColor = state === 'paused' ? '#f59e0b' : '';
+    if (!changed) return;
+    if (state === 'error') this.showStatus(progress.error || 'Typing failed', 'error');
+    else if (state === 'stopped') this.showStatus('Typing stopped', 'info');
+    else if (state === 'stopping') this.showStatus('Stopping...', 'info');
+    else if (state === 'completed') this.showStatus(progress.deliveryVerified === false
+      ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete',
+    progress.deliveryVerified === false ? 'info' : 'success');
+    else if (state === 'paused') this.showStatus('Typing paused', 'info');
+    else if (state === 'running') this.showStatus('Typing...', 'info');
+  }
+
   startProgressTracking() {
-    this.progressContainer.style.display = 'block';
-    this.progressInterval = setInterval(async () => {
-      try {
-        const response = await this.sendMessageToTab({ action: 'getTypingProgress' });
-        if (response) {
-          const { position, total, isTyping, isPaused } = response;
-          
-          if (!isTyping) {
-            this.stopProgressTracking();
-            this._setControls(false);
-            this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
-            return;
-          }
-          
-          const percentage = total > 0 ? (position / total) * 100 : 0;
-          this.progressBar.style.width = percentage + '%';
-          this.progressText.textContent = `${position} / ${total}`;
-          
-          if (isPaused) {
-            this.progressBar.style.backgroundColor = '#f59e0b';
-          } else {
-            this.progressBar.style.backgroundColor = '';
-          }
-        }
-      } catch (error) {
-        debug.log('Progress tracking error:', error);
-      }
-    }, 500);
+    if (!this.progressInterval) this.progressInterval = setInterval(() => this.syncTypingState(), 250);
   }
 
   stopProgressTracking() {
@@ -284,15 +266,13 @@ class PopupController {
   // buttons aren't stuck showing Pause/Stop after typing finished (or vice versa).
   async syncTypingState() {
     try {
-      const r = await this.sendMessageToTab({ action: 'getTypingProgress' });
-      if (r && r.isTyping) {
-        this._setControls(true);
-        this.startProgressTracking();
-      } else {
-        this._setControls(false);
-      }
-    } catch (e) {
+      const response = await this.sendMessageToTab({ action: 'getTypingProgress' });
+      this.renderTypingState(response);
+      this.startProgressTracking();
+    } catch (error) {
+      this.stopProgressTracking();
       this._setControls(false);
+      this.showStatus(error.message, 'error');
     }
   }
 
@@ -521,12 +501,13 @@ class PopupController {
   }
 
   showStatus(message, type) {
+    clearTimeout(this.statusTimeout);
     this.status.textContent = message;
     this.status.className = `status ${type}`;
     this.status.style.display = 'block';
     
     if (type === 'success' || type === 'info') {
-      setTimeout(() => {
+      this.statusTimeout = setTimeout(() => {
         this.status.style.display = 'none';
       }, 3000);
     }

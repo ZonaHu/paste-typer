@@ -41,6 +41,7 @@ Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input
 - **Right-click → "Paste as typed text"** on any editable field
 - **Adjustable speed and typo rate**
 - **Floating in-page UI**, draggable, isolated in a Shadow DOM
+- **Shared Start, Pause/Resume, and Stop controls** across the popup and floating UI
 - **Google Docs and Slides support** via a canvas-editor adapter
 - **Monaco textarea-based editors**, including editors in embedded frames
 - **Input navigation mode** to step through editable fields on a page

@@ -17,7 +17,7 @@ function setup() {
   const root = { getElementById(id) {
     if (!elements.has(id)) elements.set(id, {
       value: id === 'textInput' ? 'selected text' : id === 'speedSlider' ? '50' : '5',
-      textContent: '', classList: { remove() {} }, listeners: new Map(),
+      style: {}, textContent: '', classList: { remove() {} }, listeners: new Map(),
       addEventListener(type, fn) { this.listeners.set(type, fn); }
     });
     return elements.get(id);
@@ -43,11 +43,12 @@ function setup() {
     tabs: { sendMessage: async (tabId, message, target) => {
       if (message.action === 'getTargetInfo') return { hasTarget: target.frameId === 7,
         changedAt: target.frameId === 7 ? 100 : 0, isTyping: false };
+      if (message.action === 'getTypingProgress') return { state: 'idle', isTyping: false, position: 0, total: 0 };
       commands.push({ message, target }); return { success: true };
     } }
   };
   const context = vm.createContext({ chrome, window, document: { addEventListener() {} },
-    root, container, URL, Map, Set, console, setTimeout() {},
+    root, container, URL, Map, Set, console, setTimeout() {}, clearTimeout() {}, setInterval() { return 1; }, clearInterval() {},
     navigator: { clipboard: { async readText() { clipboardReads++; return 'clipboard text'; } } } });
   // Exercise the production controller, content-script initialization and router.
   for (const file of ['frameRouter.js', 'floating-ui.js', 'content.js']) {
@@ -77,7 +78,7 @@ test('forged page messages cannot route typing or read/write extension settings'
 
 test('untrusted clicks/input and missing events cannot invoke privileged handlers', async () => {
   const state = setup();
-  for (const id of ['startTyping', 'stopTyping', 'loadClipboard', 'closeBtn']) await state.emit(id, 'click', false);
+  for (const id of ['startTyping', 'stopTyping', 'pauseTyping', 'loadClipboard', 'closeBtn']) await state.emit(id, 'click', false);
   for (const id of ['textInput', 'speedSlider', 'typoChanceSlider']) await state.emit(id, 'input', false);
   await state.controller.startTyping(); await state.controller.stopTyping();
   await state.controller.loadFromClipboard(); await state.controller.saveSettings(); state.controller.close();
