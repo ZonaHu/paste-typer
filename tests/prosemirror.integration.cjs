@@ -240,6 +240,15 @@ const server = http.createServer((req, res) => {
     assert.equal((await read())[0].text, 'abcDEFghi\nKEEP');
     console.log('PASS adapter accepts a complete grapheme and native Backspace deletes it (engine Unicode iteration is separate)');
 
+    await setup(4, 4);
+    const longGrapheme = 'a' + '\u0301'.repeat(160);
+    assert.equal((await directInput(longGrapheme)).success, true);
+    assert.equal((await read())[0].text, 'abc' + longGrapheme + 'DEFghi\nKEEP');
+    assert.equal(await editor.evaluate(() => transactions.filter(tr => tr.id === 'one' && tr.steps.length).length), 1);
+    assert.equal(await editor.evaluate(() => commandCalls), 1);
+    await verifyUnrelated();
+    console.log('PASS a single grapheme longer than 128 UTF-16 code units commits intact once');
+
     await setup(7, 7);
     await editor.evaluate(() => { options.augmentBackspace = true; });
     assert.equal((await directInput('', 'backspace')).success, false);

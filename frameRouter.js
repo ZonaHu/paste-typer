@@ -422,7 +422,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       typeof request.token !== 'string' || typeof request.text !== 'string' ||
       !['type', 'backspace', 'clear'].includes(request.operation)) return;
   if (request.operation === 'type') {
-    if (!request.text || request.text.length > 128 ||
+    // Unicode mode matches lone UTF-16 surrogates, not complete pairs. Chrome
+    // 106 supports Segmenter but predates String.prototype.isWellFormed.
+    if (!request.text || /[\uD800-\uDFFF]/u.test(request.text) ||
         Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(request.text)).length !== 1) return;
   } else if (request.text !== '') return;
   chrome.scripting.executeScript({
