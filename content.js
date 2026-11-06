@@ -164,6 +164,7 @@ class PasteTyper {
         this.loadFloatingUIPosition(floatingContainer);
         this.floatingUIController?.syncTypingState();
       } else {
+        this.floatingUIController?.hide();
         floatingContainer.style.display = 'none';
         this.floatingUIController?.stopProgressTracking();
       }

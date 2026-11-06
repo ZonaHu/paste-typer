@@ -101,6 +101,14 @@ PT_TEST_DEPS=/path/to/test-deps node tests/acceptance.integration.cjs
 
 It uses the test-only Playwright/Monaco setup below. Repeat with both Monaco
 versions; `PT_MONACO_DEPS` may point to a separate Monaco installation.
+Text privacy controls have a disposable Chrome regression as well:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/settings.integration.cjs
+```
+
+It covers Remember text, saved-source deletion, reloads, popup/floating consistency,
+disabled-persistence typing, and forged page clicks.
 
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,

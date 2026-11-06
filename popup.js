@@ -8,7 +8,12 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
 
 class PopupController {
   constructor() {
+    this.textVersion = 0;
+    this.sourceRevision = 0;
+    this.rememberSourceText = true;
     this.textInput = document.getElementById('textInput');
+    this.rememberText = document.getElementById('rememberText');
+    this.deleteSavedText = document.getElementById('deleteSavedText');
     this.speedSlider = document.getElementById('speedSlider');
     this.speedValue = document.getElementById('speedValue');
     this.typoChanceSlider = document.getElementById('typoChanceSlider');
@@ -43,23 +48,50 @@ class PopupController {
     this.prepareFrames();
 
     this.setupEventListeners();
-    this.loadSettings();
+    this.settingsReady = this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
     this.checkCurrentTab();
     this.checkActiveElement();
     this.syncTypingState();
   }
 
   setupEventListeners() {
+    // Synthetic checkbox/label clicks can generate a trusted change event.
+    // Cancel their default action before it reaches the preference handler.
+    document.getElementById('textPrivacy').addEventListener('click', event => {
+      if (event.isTrusted !== true) event.preventDefault();
+    }, true);
+    this.rememberText.addEventListener('change', event => {
+      if (event.isTrusted !== true) return;
+      this.updateTextPrivacy('save', { rememberText: this.rememberText.checked });
+    });
+    this.deleteSavedText.addEventListener('click', event => {
+      if (event.isTrusted !== true) return;
+      this.updateTextPrivacy('clearText');
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      const change = changes.pasteTyperSettings;
+      if (area !== 'local' || !change) return;
+      this.sourceRevision = change.newValue?.textRevision || 0;
+      const remember = change.newValue?.rememberText !== false;
+      if (this.rememberSourceText !== remember) this.textVersion++;
+      this.rememberSourceText = this.rememberText.checked = remember;
+      if (change.oldValue?.textRevision !== change.newValue?.textRevision ||
+          (change.oldValue && 'text' in change.oldValue && !('text' in (change.newValue || {}))) ||
+          (change.oldValue?.rememberText !== false && change.newValue?.rememberText === false)) {
+        this.textVersion++;
+        this.textInput.value = '';
+      }
+    });
     this.speedSlider.addEventListener('input', () => {
       const speed = this.speedSlider.value;
       this.speedValue.textContent = `${speed}ms`;
-      this.saveSettings();
+      this.saveSettings('speed');
     });
 
     if (this.typoChanceSlider) {
       this.typoChanceSlider.addEventListener('input', () => {
         this.typoChanceValue.textContent = PTTypoRate.formatPercent(this.typoChanceSlider.value);
-        this.saveSettings();
+        this.saveSettings('typoChance');
       });
     }
 
@@ -111,21 +143,28 @@ class PopupController {
     });
 
     this.textInput.addEventListener('input', () => {
-      this.saveSettings();
+      this.textEdited = true;
+      this.textVersion++;
+      this.saveSettings('text');
     });
   }
 
   async loadFromClipboard() {
     try {
+      const version = this.textVersion;
+      await this.settingsReady;
+      const revision = this.sourceRevision;
       this.showStatus('Loading from clipboard...', 'info');
       // With the clipboardRead permission this is reliable inside the popup.
       const text = await navigator.clipboard.readText();
+      if (version !== this.textVersion) return;
       if (!text) {
         this.showStatus('Clipboard is empty', 'error');
         return;
       }
+      const saved = await this.settingsRequest('save', { text }, revision);
+      if (version !== this.textVersion || (saved.textRevision || 0) !== revision) return;
       this.textInput.value = text;
-      this.saveSettings();
       this.showStatus('Clipboard text loaded', 'success');
     } catch (error) {
       this.showStatus('Could not read clipboard. Copy some text and try again.', 'error');
@@ -539,22 +578,50 @@ class PopupController {
     }
   }
 
-  saveSettings() {
-    const settings = {
-      text: this.textInput.value,
-      speed: this.speedSlider.value,
-      typoChance: String(PTTypoRate.normalizePercent(this.typoChanceSlider?.value))
-    };
-    
-    chrome.storage.local.set({ pasteTyperSettings: settings });
+  async settingsRequest(operation, settings, textRevision = this.sourceRevision) {
+    const response = await chrome.runtime.sendMessage({ action: 'ptSettings', operation, settings, textRevision });
+    if (!response?.success) throw new Error(response?.error || 'Settings are unavailable.');
+    return response.settings;
   }
 
-  loadSettings() {
-    chrome.storage.local.get(['pasteTyperSettings'], (result) => {
-      if (result.pasteTyperSettings) {
-        const settings = result.pasteTyperSettings;
+  async updateTextPrivacy(operation, settings) {
+    this.textVersion++;
+    try {
+      const saved = await this.settingsRequest(operation, settings);
+      this.rememberSourceText = this.rememberText.checked = saved.rememberText;
+      if (operation === 'clearText' || !saved.rememberText) this.textInput.value = '';
+      this.showStatus(operation === 'clearText' ? 'Saved text deleted' :
+        saved.rememberText ? 'New text will be remembered' : 'Text will no longer be saved', 'info');
+    } catch (error) {
+      this.showStatus('Failed to change text privacy: ' + error.message, 'error');
+    }
+  }
+
+  async saveSettings(field = 'text') {
+    const values = { text: this.textInput.value, speed: this.speedSlider.value,
+      typoChance: this.typoChanceSlider ? this.typoChanceSlider.value : '5' };
+    const version = this.textVersion;
+    try {
+      await this.settingsReady;
+      if (field === 'text' && version !== this.textVersion) return;
+      await this.settingsRequest('save', { [field]: values[field] });
+    } catch (error) {
+      this.showStatus('Failed to save settings: ' + error.message, 'error');
+    }
+  }
+
+  async loadSettings() {
+      const settings = await this.settingsRequest('get');
+      // A privacy change can arrive while the initial response is in flight.
+      const currentSource = (settings.textRevision || 0) >= this.sourceRevision;
+      if (currentSource) {
+        this.sourceRevision = settings.textRevision || 0;
+        this.rememberSourceText = this.rememberText.checked = settings.rememberText;
+      }
+      this.rememberText.disabled = this.deleteSavedText.disabled = false;
+      if (settings) {
         
-        if (settings.text) {
+        if (currentSource && settings.rememberText && settings.text && !this.textEdited) {
           this.textInput.value = settings.text;
         }
         
@@ -573,7 +640,6 @@ class PopupController {
           this.typoChanceValue.textContent = PTTypoRate.formatPercent();
         }
       }
-    });
   }
 
   async openFloatingUI() {
