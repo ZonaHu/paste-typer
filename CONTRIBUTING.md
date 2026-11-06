@@ -94,6 +94,11 @@ script without its floating controller. This verifies dependency repair without
 class redeclarations. The harness also checks settings persistence after panel
 recreation and removes partial markup when controller initialization fails.
 
+Office on the web changes need a live document-body acceptance check, not only a
+contenteditable fixture. Use the [Office validation workflow](docs/office-validation.md)
+to distinguish the Word document body from its title, hidden accessibility nodes
+and embedded-frame permissions. Keep Word, Outlook and Excel results separate.
+
 ## Code style
 
 Plain JavaScript, no build tooling, no dependencies. Match the surrounding style.
