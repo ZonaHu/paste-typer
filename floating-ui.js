@@ -10,7 +10,8 @@ class FloatingUIController {
     this.container = container;
     this.textVersion = 0;
     this.sourceRevision = 0;
-    this.rememberSourceText = true;
+    // Until settings arrive, closing must discard a potentially private draft.
+    this.rememberSourceText = null;
     this.textInput = root.getElementById('textInput');
     this.rememberText = root.getElementById('rememberText');
     this.deleteSavedText = root.getElementById('deleteSavedText');

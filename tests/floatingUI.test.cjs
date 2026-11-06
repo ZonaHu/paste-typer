@@ -4,11 +4,13 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setup() {
+function setup({ savedSettings, delaySettings = false } = {}) {
   const commands = [], writes = [], pageListeners = [], elements = new Map();
   let clipboardReads = 0;
   let clipboardValue = 'clipboard text';
-  let saved = { text: 'selected text', speed: '50', typoChance: '5' };
+  let saved = savedSettings || { text: 'selected text', speed: '50', typoChance: '5' };
+  let releaseSettings;
+  const settingsDelay = delaySettings ? new Promise(resolve => { releaseSettings = resolve; }) : Promise.resolve();
   const storageListeners = [];
   const messageListeners = [];
   const window = {
@@ -32,7 +34,9 @@ function setup() {
       getURL: p => `chrome-extension://test/${p}`,
       sendMessage: async request => {
         if (request.action === 'ptSettings') {
-          return new Promise(resolve => messageListeners.forEach(fn => fn(request, { url: 'chrome-extension://test/popup.html' }, resolve)));
+          const response = await new Promise(resolve => messageListeners.forEach(fn => fn(request, { url: 'chrome-extension://test/popup.html' }, resolve)));
+          if (request.operation === 'get') await settingsDelay;
+          return response;
         }
         assert.equal(request.action, 'ptRoute');
         return vm.runInContext('frameRouter', context).route(1, request.message);
@@ -68,6 +72,7 @@ function setup() {
   }
   const controller = vm.runInContext('new FloatingUIController(root, container)', context);
   return { commands, writes, window, root, container, controller,
+    releaseSettings,
     deferClipboard() { let resolve; clipboardValue = new Promise(done => { resolve = done; }); return resolve; },
     clipboardReads: () => clipboardReads,
     async emit(id, type, isTrusted) {
@@ -147,4 +152,20 @@ test('closing the floating panel discards private drafts and pending clipboard r
   resolveRead('private clipboard');
   await pending;
   assert.equal(state.root.getElementById('textInput').value, '');
+});
+
+test('closing before disabled privacy settings load still discards the private draft', async () => {
+  const state = setup({ savedSettings: { rememberText: false }, delaySettings: true });
+  await new Promise(resolve => setImmediate(resolve));
+  const input = state.root.getElementById('textInput');
+  input.value = 'private draft entered before settings loaded';
+  input.listeners.get('input')({ isTrusted: true });
+  state.controller.close({ isTrusted: true });
+  // Reopening must not retain the closed draft, even before settings arrive.
+  state.container.style.display = 'block';
+  state.releaseSettings();
+  await state.controller.settingsReady;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(input.value, '');
+  assert.equal(state.writes.at(-1).pasteTyperSettings.text, undefined);
 });
