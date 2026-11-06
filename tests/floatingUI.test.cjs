@@ -50,7 +50,7 @@ function setup() {
     root, container, URL, Map, Set, console, setTimeout() {},
     navigator: { clipboard: { async readText() { clipboardReads++; return 'clipboard text'; } } } });
   // Exercise the production controller, content-script initialization and router.
-  for (const file of ['frameRouter.js', 'floating-ui.js', 'content.js']) {
+  for (const file of ['content/typoRate.js', 'frameRouter.js', 'floating-ui.js', 'content.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   const controller = vm.runInContext('new FloatingUIController(root, container)', context);

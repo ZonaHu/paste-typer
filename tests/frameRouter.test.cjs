@@ -4,11 +4,12 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setup({ denied = false, running = false, partial = false, legacy = false, legacyFrame = 0, helperOnly = false } = {}) {
+function setup({ denied = false, running = false, partial = false, legacy = false, legacyFrame = 0, helperOnly = false, missingTypoRate = false } = {}) {
   const sent = [];
   const injected = [];
   const loaded = new Set(partial ? [0] : legacy ? [legacyFrame] : []);
   const floatingLoaded = new Set(helperOnly ? [0] : []);
+  const typoRateLoaded = new Set(!missingTypoRate && (partial || helperOnly) ? [0] : []);
   const injectedFiles = [];
   const session = {};
   const listeners = [];
@@ -33,9 +34,10 @@ function setup({ denied = false, running = false, partial = false, legacy = fals
         injected.push(id); injectedFiles.push([...files]);
         if (files.includes('content.js')) loaded.add(id);
         if (files.includes('floating-ui.js')) floatingLoaded.add(id);
+        if (files.includes('content/typoRate.js')) typoRateLoaded.add(id);
         return [];
       }
-      return [{ result: { hasTyper: loaded.has(id), hasFloating: floatingLoaded.has(id), legacyBridge: legacy && id === legacyFrame } }];
+      return [{ result: { hasTyper: loaded.has(id), hasFloating: floatingLoaded.has(id), hasTypoRate: typoRateLoaded.has(id), legacyBridge: legacy && id === legacyFrame } }];
     } },
     tabs: { sendMessage: async (tabId, message, options) => {
       sent.push({ tabId, message, options });
@@ -156,13 +158,20 @@ test('partial content installation loads only the missing isolated controller on
   assert.deepEqual(injectedFiles, [['floating-ui.js']]);
 });
 
+test('a missing typo-rate helper is repaired without redeclaring loaded controllers', async () => {
+  const { router, injectedFiles } = setup({ partial: true, helperOnly: true, missingTypoRate: true });
+  await router.ensure(1, 0);
+  await router.ensure(1, 0);
+  assert.deepEqual(injectedFiles, [['content/typoRate.js']]);
+});
+
 test('a transient null probe is retried without injecting into a loaded frame', async () => {
   const { router, chrome, injected } = setup();
   const execute = chrome.scripting.executeScript;
   let probes = 0;
   chrome.scripting.executeScript = async args => {
     if (args.func && !args.target.allFrames) return [{ result: ++probes === 1 ? null
-      : { hasTyper: true, hasFloating: true, legacyBridge: false } }];
+      : { hasTyper: true, hasFloating: true, hasTypoRate: true, legacyBridge: false } }];
     return execute(args);
   };
   await router.ensure(1, 0);

@@ -1,4 +1,4 @@
-importScripts('frameRouter.js');
+importScripts('content/typoRate.js', 'frameRouter.js');
 
 if (typeof globalThis.PT_DEBUG === "undefined") {
   globalThis.PT_DEBUG = false;
@@ -35,10 +35,12 @@ class BackgroundService {
         try {
           const clipboardText = await this.readClipboard();
           if (clipboardText) {
+            const { pasteTyperSettings } = await chrome.storage.local.get('pasteTyperSettings');
             await frameRouter.route(tab.id, {
               action: 'startTyping',
               text: clipboardText,
-              targetElement: true
+              targetElement: true,
+              typoChance: PTTypoRate.toProbability(pasteTyperSettings?.typoChance)
             }, info.frameId);
           }
         } catch (error) {

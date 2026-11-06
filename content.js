@@ -21,7 +21,8 @@ class PasteTyper {
     this.pauseDuration = 200; // Duration of pauses in ms
     
     // Enhanced human-like typing features
-    this.typoChance = 0.005; // 0.5% chance of making a typo
+    this.typoChance = PTTypoRate.toProbability();
+    this.typoChanceFromRequest = false;
     this.typoCorrectionDelay = 300; // Delay before correcting typo
     
     // Input field navigation
@@ -38,9 +39,8 @@ class PasteTyper {
 
   loadTypoChanceSetting() {
     chrome.storage.local.get(['pasteTyperSettings'], (result) => {
-      if (result.pasteTyperSettings && result.pasteTyperSettings.typoChance !== undefined) {
-        const sliderValue = parseInt(result.pasteTyperSettings.typoChance);
-        this.typoChance = sliderValue / 100;
+      if (!this.typoChanceFromRequest && result.pasteTyperSettings && result.pasteTyperSettings.typoChance !== undefined) {
+        this.typoChance = PTTypoRate.toProbability(result.pasteTyperSettings.typoChance);
       }
     });
   }
@@ -55,6 +55,7 @@ class PasteTyper {
         // Update typoChance if provided
         if (request.typoChance !== undefined) {
           this.typoChance = request.typoChance;
+          this.typoChanceFromRequest = true;
         }
         if (request.speed !== undefined) {
           this.typingSpeed = request.speed;

@@ -43,6 +43,16 @@ Run the frame routing and selection regression checks with Node.js:
 node --test tests/*.test.cjs
 ```
 
+The typo-rate regression also checks real popup/floating labels, saved percent
+values and helper repair in a disposable Chrome profile:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/typoRate.integration.cjs
+```
+
+Use the test-only Playwright setup below. Node tests check deterministic 0%, 5%
+and 10% probability boundaries for both controls and the context menu.
+
 For ordinary-field insertion changes, run `tests/standardInput.integration.cjs`
 with the same test-only Playwright setup described below:
 

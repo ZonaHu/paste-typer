@@ -71,6 +71,12 @@ of the field. **Clear entire field** explicitly deletes all content in the selec
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 
+**Typo rate** — the slider is a percentage per eligible character: 5 means a 5%
+chance. Earlier labels understated the rate while the typing engine used the
+saved value as a percentage. Saved slider values keep that meaning: a saved 5
+still means 5%, and the corrected label now shows 5%. The default is 5% in the
+popup, floating UI and context menu. Set it to 0 for no simulated typos.
+
 **Embedded editors** — if the editor is hosted on another site, choose its site under
 "Allow access to an embedded editor's site" in the popup and click "Allow selected
 site". Only that site is requested; you can revoke access in Chrome's extension
