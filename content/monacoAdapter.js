@@ -1,9 +1,11 @@
-// Monaco owns the document and undo history. Its textarea is an input surface,
-// not the document: never clear it or assign the full code to textarea.value.
+// Monaco owns the document and undo history. Its textarea/EditContext is an
+// input surface, not the document: never replace it with the full code.
 class MonacoAdapter extends InputAdapter {
   static detect(element) {
-    return !!(element && element.tagName === 'TEXTAREA' &&
-      element.classList.contains('inputarea') && element.closest('.monaco-editor'));
+    return !!(element && element.closest('.monaco-editor') &&
+      ((element.tagName === 'TEXTAREA' && element.classList.contains('inputarea')) ||
+       (element.classList.contains('native-edit-context') && typeof EditContext === 'function' &&
+        element.editContext instanceof EditContext)));
   }
 
   async getTarget() {
@@ -27,6 +29,10 @@ class MonacoAdapter extends InputAdapter {
   }
 
   async typeCharacter(element, char) {
+    return this._input(element, char);
+  }
+
+  async _input(element, text, command = 'type') {
     if (!element.isConnected) return { success: false, error: 'The selected editor was removed.' };
     if (document.activeElement !== element) element.focus({ preventScroll: true });
     // Simulate keyboard/text input. The frame-local helper temporarily prevents
@@ -35,34 +41,19 @@ class MonacoAdapter extends InputAdapter {
     const token = crypto.randomUUID();
     element.setAttribute('data-paste-typer-target', token);
     try {
-      return await chrome.runtime.sendMessage({ action: 'ptMonacoInput', token, text: char });
+      return await chrome.runtime.sendMessage({ action: 'ptMonacoInput', token, text, command });
     } finally {
       element.removeAttribute('data-paste-typer-target');
     }
   }
 
   async simulateBackspace(element) {
-    if (!element.isConnected) return { success: false, error: 'The selected editor was removed.' };
-    if (document.activeElement !== element) element.focus({ preventScroll: true });
-    return document.execCommand('delete', false)
-      ? { success: true } : { success: false, error: 'Monaco did not accept backspace.' };
+    return this._input(element, '', 'backspace');
   }
 
   async reset(element) {
     await this.focus(element);
-    element.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'a', code: 'KeyA', keyCode: 65, which: 65,
-      ctrlKey: !/Mac/.test(navigator.platform), metaKey: /Mac/.test(navigator.platform),
-      bubbles: true, cancelable: true
-    }));
-    this._key(element, 'Backspace', 8);
-  }
-
-  _key(element, key, keyCode) {
-    for (const type of ['keydown', 'keyup']) {
-      element.dispatchEvent(new KeyboardEvent(type, {
-        key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true
-      }));
-    }
+    const result = await this._input(element, '', 'clear');
+    if (!result?.success) throw Error(result?.error || 'Monaco did not accept Clear.');
   }
 }

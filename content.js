@@ -366,6 +366,9 @@ class PasteTyper {
 
 
   isEditableElement(element) {
+    if (typeof MonacoAdapter !== 'undefined' && MonacoAdapter.detect(element)) {
+      return targetTracker.isEditable(element);
+    }
     const editableTags = ['INPUT', 'TEXTAREA'];
     const editableTypes = ['text', 'email', 'password', 'search', 'url', 'tel'];
     
@@ -1440,7 +1443,8 @@ class PasteTyper {
       '[contenteditable=""]',
       'div[contenteditable]',
       'p[contenteditable]',
-      'span[contenteditable]'
+      'span[contenteditable]',
+      '.monaco-editor .native-edit-context'
     ];
     
     const inputs = document.querySelectorAll(selectors.join(', '));
@@ -1461,7 +1465,8 @@ class PasteTyper {
     }
     
     inputs.forEach(input => {
-      const rect = input.getBoundingClientRect();
+      if (input.classList.contains('native-edit-context') && !targetTracker.isEditable(input)) return;
+      const rect = targetTracker.getEditableRect(input);
       // Only highlight visible elements
       if (rect.width > 0 && rect.height > 0) {
         input.classList.add('paste-typer-highlight');
@@ -1520,12 +1525,14 @@ class PasteTyper {
       '[contenteditable=""]',
       'div[contenteditable]',
       'p[contenteditable]',
-      'span[contenteditable]'
+      'span[contenteditable]',
+      '.monaco-editor .native-edit-context'
     ];
     
     const inputs = document.querySelectorAll(selectors.join(', '));
     this.availableInputs = Array.from(inputs).filter(input => {
-      const rect = input.getBoundingClientRect();
+      if (input.classList.contains('native-edit-context') && !targetTracker.isEditable(input)) return false;
+      const rect = targetTracker.getEditableRect(input);
       return rect.width > 0 && rect.height > 0; // Only visible inputs
     });
     

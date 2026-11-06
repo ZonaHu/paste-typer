@@ -64,7 +64,7 @@ test('Monaco input is confined to the sending content-script document', async ()
   assert.equal(injected.world, 'MAIN');
   assert.equal(injected.target.tabId, 1);
   assert.deepEqual([...injected.target.documentIds], ['editor']);
-  assert.deepEqual([...injected.args], ['chosen', '{']);
+  assert.deepEqual([...injected.args], ['chosen', '{', 'type']);
 });
 
 test('Monaco input rejects extension pages and malformed payloads', () => {
@@ -75,6 +75,27 @@ test('Monaco input rejects extension pages and malformed payloads', () => {
     [{ action: 'ptMonacoInput', token: 'chosen', text: 'whole document' }, { tab: { id: 1 }, documentId: 'editor', url: 'https://editor.test/' }],
     [{ action: 'ptMonacoInput', token: 'chosen', text: '{' }, { tab: { id: 1 }, url: 'https://editor.test/' }]
   ]) assert.equal(listeners[0](request, sender, () => {}), undefined);
+});
+
+test('Monaco control keys use the sending document and reject arbitrary commands', async () => {
+  const { chrome, listeners } = setup();
+  let injected;
+  chrome.scripting.executeScript = async options => { injected = options; return [{ result: { success: true } }]; };
+  const sender = { tab: { id: 1 }, documentId: 'selected-editor', url: 'https://editor.test/' };
+  for (const command of ['clear', 'backspace']) {
+    const result = await new Promise(resolve => {
+      assert.equal(listeners[0]({ action: 'ptMonacoInput', token: 'chosen', text: '', command,
+        tabId: 999, documentId: 'another-editor' }, sender, resolve), true);
+    });
+    assert.equal(result.success, true);
+    assert.equal(injected.target.tabId, 1);
+    assert.deepEqual([...injected.target.documentIds], ['selected-editor']);
+    assert.deepEqual([...injected.args], ['chosen', '', command]);
+  }
+  chrome.scripting.executeScript = () => { throw Error('must not inject'); };
+  for (const command of ['paste', 'executeEdits', 'deleteEverything']) {
+    assert.equal(listeners[0]({ action: 'ptMonacoInput', token: 'chosen', text: '', command }, sender, () => {}), undefined);
+  }
 });
 
 test('start targets only the most recently selected frame and its document', async () => {

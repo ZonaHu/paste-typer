@@ -42,7 +42,7 @@ Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input
 - **Adjustable speed and typo rate**
 - **Floating in-page UI**, draggable, isolated in a Shadow DOM
 - **Google Docs and Slides support** via a canvas-editor adapter
-- **Monaco textarea-based editors**, including editors in embedded frames
+- **Monaco textarea and native EditContext editors**, including editors in embedded frames
 - **Input navigation mode** to step through editable fields on a page
 - **Zero dependencies, zero network requests** — everything runs locally
 
@@ -80,8 +80,9 @@ the document. Monaco must expose its editor API as `window.monaco` so the extens
 can temporarily suppress automatic indentation and paired characters during each
 simulated keystroke, then immediately restore the editor's options. Text still
 enters through keyboard/text-input events, not clipboard paste or direct model
-edits. Newer Monaco configurations using EditContext rather than a textarea
-are not supported yet. Chrome 106 or newer is required.
+edits. Native EditContext input is detected when the browser exposes the required
+APIs; ordinary textarea input continues to work on Chrome 106 or newer. Sites
+that hide their Monaco API cannot currently use this adapter.
 
 ## Supported fields
 
@@ -91,7 +92,7 @@ are not supported yet. Chrome 106 or newer is required.
 | `<textarea>` | ✅ |
 | `contenteditable` | ✅ |
 | Google Docs / Slides canvas | ✅ |
-| Monaco textarea-based editor (including permitted iframes) | ✅ |
+| Monaco textarea / native EditContext editor (with exposed API, including permitted iframes) | ✅ |
 
 ## How it works
 

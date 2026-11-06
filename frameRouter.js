@@ -171,8 +171,8 @@ const frameRouter = new FrameRouter();
 // Runs in the selected frame's MAIN world: content scripts cannot access the
 // page's Monaco instances. Never search other frames or fall back to another
 // editor when the selected input disappears.
-function simulateMonacoInput(token, text) {
-  const element = Array.from(document.querySelectorAll('textarea.inputarea'))
+async function simulateMonacoInput(token, text, command = 'type') {
+  const element = Array.from(document.querySelectorAll('textarea.inputarea, .native-edit-context'))
     .find(candidate => candidate.getAttribute('data-paste-typer-target') === token);
   const root = element?.closest('.monaco-editor');
   const api = window.monaco;
@@ -184,6 +184,86 @@ function simulateMonacoInput(token, text) {
   const model = editor.getModel();
   if (!model || editor.getOption(api.editor.EditorOption.readOnly)) {
     return { success: false, error: 'The selected Monaco editor is not editable.' };
+  }
+  const native = element.classList.contains('native-edit-context');
+  if (native && (typeof EditContext !== 'function' || typeof TextUpdateEvent !== 'function' ||
+      !(element.editContext instanceof EditContext))) {
+    return { success: false, error: 'Native Monaco text input is unavailable in this browser.' };
+  }
+  const stillSelected = () => element.isConnected && element.closest('.monaco-editor') === root &&
+    editor.getDomNode() === root && editor.getModel() === model;
+  if (command !== 'type') {
+    const current = () => stillSelected() && document.activeElement === element &&
+      element.getAttribute('data-paste-typer-target') === token &&
+      api.editor.getEditors().includes(editor) && !editor.getOption(api.editor.EditorOption.readOnly);
+    const failed = () => ({ success: false, error: 'Monaco did not accept the simulated deletion in the selected editor.' });
+    const value = model.getValue();
+    const selections = editor.getSelections();
+    if (!current() || command === 'backspace' && selections?.length !== 1) return failed();
+    const selection = selections?.[0];
+    const start = command === 'clear' ? 0 : model.getOffsetAt({
+      lineNumber: selection.startLineNumber, column: selection.startColumn });
+    const end = command === 'clear' ? value.length : model.getOffsetAt({
+      lineNumber: selection.endLineNumber, column: selection.endColumn });
+    const collapsed = command === 'backspace' && start === end;
+    let floor = start;
+    if (collapsed && start > 0) {
+      if (typeof Intl.Segmenter !== 'function') return failed();
+      floor = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+        .segment(value).containing(start - 1).index;
+    }
+    const expected = command === 'clear' ? '' : value.slice(0, start) + value.slice(end);
+    const boundary = offset => {
+      const left = value.charCodeAt(offset - 1), right = value.charCodeAt(offset);
+      return !(left >= 0xD800 && left <= 0xDBFF && right >= 0xDC00 && right <= 0xDFFF);
+    };
+    const matchesDeletion = () => {
+      const selections = editor.getSelections();
+      const selection = selections?.[0];
+      if (selections?.length !== 1 || selection.startLineNumber !== selection.endLineNumber ||
+          selection.startColumn !== selection.endColumn) return false;
+      const offset = model.getOffsetAt({ lineNumber: selection.startLineNumber, column: selection.startColumn });
+      // Native Backspace may remove an emoji component or combining mark.
+      // Accept its caret only within the preceding grapheme, with no other edit.
+      return collapsed ? offset >= floor && offset < end && boundary(offset) && boundary(end) &&
+        model.getValue() === value.slice(0, offset) + value.slice(end)
+        : offset === start && model.getValue() === expected;
+    };
+    const key = (type, key, keyCode, selectAll = false) => element.dispatchEvent(new KeyboardEvent(type, {
+      key, code: selectAll ? 'KeyA' : key, keyCode, which: keyCode,
+      ctrlKey: selectAll && !/Mac/.test(navigator.platform),
+      metaKey: selectAll && /Mac/.test(navigator.platform), bubbles: true, cancelable: true
+    }));
+    if (command === 'clear' && value.length > 0) {
+      const selectedAll = () => {
+        const selections = editor.getSelections();
+        const range = model.getFullModelRange();
+        return current() && model.getValue() === value && selections?.length === 1 &&
+          selections[0].startLineNumber === range.startLineNumber && selections[0].startColumn === range.startColumn &&
+          selections[0].endLineNumber === range.endLineNumber && selections[0].endColumn === range.endColumn;
+      };
+      key('keydown', 'a', 65, true);
+      if (!selectedAll()) return failed();
+      key('keyup', 'a', 65, true);
+      if (!selectedAll()) return failed();
+      await Promise.resolve();
+      if (!selectedAll()) return failed();
+    }
+    if (command === 'clear' && value.length === 0) {
+      await Promise.resolve();
+      return current() && matchesDeletion() ? { success: true } : failed();
+    }
+    const before = model.getVersionId();
+    const accepted = () => current() && model.getVersionId() !== before &&
+      matchesDeletion();
+    key('keydown', 'Backspace', 8);
+    if (!accepted()) return failed();
+    key('keyup', 'Backspace', 8);
+    if (!accepted()) return failed();
+    // Page/editor handlers may queue a restoration or swap the target after
+    // the keyboard event. Acknowledge only the settled requested deletion.
+    await Promise.resolve();
+    return accepted() ? { success: true } : failed();
   }
   const option = name => editor.getOption(api.editor.EditorOption[name]);
   const saved = {
@@ -210,16 +290,44 @@ function simulateMonacoInput(token, text) {
       bubbles: true, cancelable: true });
     const versionBeforeKey = model.getVersionId();
     const accepted = element.dispatchEvent(keyboard('keydown'));
+    if (!stillSelected()) return { success: false, error: 'The selected editor was removed or is no longer available.' };
     // Monaco handles Enter in keydown. Printable characters (and literal tabs)
     // need the text-input stage that untrusted KeyboardEvents cannot generate.
     if (accepted) {
-      element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
-      element.dispatchEvent(new InputEvent('input', { data: text,
-        inputType: 'insertText', bubbles: true }));
+      if (native) {
+        // Flush Monaco's deferred selection update before reading the native
+        // input range. TextUpdateEvent follows the same path as browser typing.
+        editor.render(true);
+        const context = element.editContext;
+        const start = context.selectionStart;
+        const end = context.selectionEnd;
+        const before = context.text;
+        try {
+          // Match browser text input: update the native input state before
+          // notifying Monaco, which owns the model and undo transaction.
+          context.updateText(start, end, text);
+          context.updateSelection(start + text.length, start + text.length);
+          context.dispatchEvent(new TextUpdateEvent('textupdate', { text,
+            updateRangeStart: start, updateRangeEnd: end,
+            selectionStart: start + text.length, selectionEnd: start + text.length }));
+        } finally {
+          if (model.getVersionId() === versionBeforeKey) {
+            context.updateText(0, context.text.length, before);
+            context.updateSelection(start, end);
+          }
+        }
+      } else {
+        element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
+        element.dispatchEvent(new InputEvent('input', { data: text,
+          inputType: 'insertText', bubbles: true }));
+      }
     } else if (text !== '\n' || model.getVersionId() === versionBeforeKey) {
       return { success: false, error: 'The editor intercepted the simulated key.' };
     }
     element.dispatchEvent(keyboard('keyup'));
+    if (native && model.getVersionId() === versionBeforeKey) {
+      return { success: false, error: 'Monaco did not accept the simulated text input.' };
+    }
     return { success: true };
   } finally {
     editor.updateOptions(saved);
@@ -228,14 +336,16 @@ function simulateMonacoInput(token, text) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action !== 'ptMonacoInput') return;
+  const command = request.command || 'type';
   // Only content scripts in their own document may request these edits. A
   // popup cannot choose a tab, frame, or document through this message.
   if (!sender.tab || !sender.documentId || !/^https?:|^about:/.test(sender.url || '') ||
       typeof request.token !== 'string' || typeof request.text !== 'string' ||
-      request.text.length === 0 || request.text.length > 2) return;
+      !['type', 'clear', 'backspace'].includes(command) ||
+      (command === 'type' ? request.text.length === 0 || request.text.length > 2 : request.text !== '')) return;
   chrome.scripting.executeScript({
     target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
-    world: 'MAIN', func: simulateMonacoInput, args: [request.token, request.text]
+    world: 'MAIN', func: simulateMonacoInput, args: [request.token, request.text, command]
   }).then(results => sendResponse(results[0]?.result ||
     { success: false, error: 'The selected editor is no longer available.' }))
     .catch(error => sendResponse({ success: false, error: error.message }));

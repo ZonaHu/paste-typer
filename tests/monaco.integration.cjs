@@ -7,6 +7,8 @@ const root = path.resolve(__dirname, '..');
 const dependencies = path.resolve(process.env.PT_TEST_DEPS || path.join(root, '.local-analysis/harness'));
 const { chromium } = require(path.join(dependencies, 'node_modules/playwright'));
 const monacoRoot = path.join(path.resolve(process.env.PT_MONACO_DEPS || dependencies), 'node_modules/monaco-editor');
+const nativeEditContext = process.env.PT_NATIVE_EDIT_CONTEXT === '1';
+const inputSelector = nativeEditContext ? '.native-edit-context' : 'textarea.inputarea';
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'paste-typer-test-'));
 const extension = path.join(scratch, 'extension');
 fs.mkdirSync(extension, {recursive:true});
@@ -22,7 +24,7 @@ fs.writeFileSync(path.join(extension,'manifest.json'), JSON.stringify(manifest))
 const editorHtml = `<!doctype html><html><body><div id="one" style="height:250px"></div><div id="two" style="height:250px"></div>
 <script src="/vs/loader.js"></script><script>
 require.config({paths:{vs:'/vs'}});require(['vs/editor/editor.main'],function(){
-window.editors=[monaco.editor.create(document.getElementById('one'),{value:'abcdef',language:'plaintext',automaticLayout:true,editContext:false}),monaco.editor.create(document.getElementById('two'),{value:'SECOND',language:'plaintext',automaticLayout:true,editContext:false})];
+window.editors=[monaco.editor.create(document.getElementById('one'),{value:'abcdef',language:'plaintext',automaticLayout:true,editContext:${nativeEditContext}}),monaco.editor.create(document.getElementById('two'),{value:'SECOND',language:'plaintext',automaticLayout:true,editContext:${nativeEditContext}})];
 editors[0].setPosition({lineNumber:1,column:4});editors[0].focus();window.ready=true;
 });</script></body></html>`;
 const server = http.createServer((req,res)=>{
@@ -46,6 +48,8 @@ const server = http.createServer((req,res)=>{
   const worker=context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', {timeout:5000});
   const page=await context.newPage(); await page.goto(`http://127.0.0.1:${port}/`);
   const editor=page.frame({url:new RegExp('/editor$')}); await editor.waitForFunction(()=>window.ready);
+  if(nativeEditContext) assert.equal(await editor.locator(inputSelector).first().evaluate(input=>
+    input.editContext instanceof EditContext && typeof TextUpdateEvent === 'function'),true);
   const tabId=await worker.evaluate(async()=>{const tabs=await chrome.tabs.query({});return tabs.find(t=>t.url?.startsWith('http://127.0.0.1:')).id;});
   const route=(message)=>worker.evaluate(({tabId,message})=>frameRouter.route(tabId,message),{tabId,message});
   const prepare=()=>worker.evaluate(tabId=>frameRouter.prepare(tabId).then(r=>r.available.map(f=>({frameId:f.frameId,info:f.info}))),tabId);
@@ -54,6 +58,20 @@ const server = http.createServer((req,res)=>{
       files:PT_CONTENT_FILES.filter(file=>file!=='floating-ui.js')}),tabId);
   }
   await prepare();
+  assert.equal((await route({action:'getActiveElement'})).isEditable,true);
+  if(nativeEditContext){
+    await route({action:'startInputNavigation'});
+    const nativeTargets=await worker.evaluate(async tabId=>{
+      const results=await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>
+        typeof pasteTyper==='undefined'?[]:pasteTyper.availableInputs
+          .filter(input=>input.classList.contains('native-edit-context'))
+          .map(input=>input.closest('#one, #two')?.id)});
+      return results.flatMap(result=>result.result);
+    },tabId);
+    assert.deepEqual(nativeTargets,['one','two']);
+    await route({action:'stopInputNavigation'});
+    console.log('PASS Navigate discovers both native Monaco input surfaces');
+  }
   await worker.evaluate(()=>{
     globalThis.testRoutedCommands=[];
     const original=frameRouter.route.bind(frameRouter);
@@ -64,11 +82,170 @@ const server = http.createServer((req,res)=>{
   await worker.evaluate(async tabId=>{await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>{if(typeof pasteTyper!=='undefined')pasteTyper.pauseChance=0;}});},tabId);
   const read=()=>editor.evaluate(()=>editors.map(e=>e.getValue().replace(/\r\n/g,'\n')));
   const waitDone=async()=>{for(let i=0;i<1500;i++){const r=await route({action:'getTypingProgress'});if(!r.isTyping){assert.equal(r.error,null);return;}await new Promise(r=>setTimeout(r,30));}throw Error('typing timed out');};
+  // Exercise the real isolated-to-MAIN bridge rather than a model-edit mock.
+  const deletion = command => worker.evaluate(async ({tabId,command}) => {
+    const frames=await frameRouter.frames(tabId);
+    const frame=frames.find(candidate=>candidate.url.endsWith('/editor'));
+    const results=await chrome.scripting.executeScript({target:{tabId,documentIds:[frame.documentId]},
+      world:'ISOLATED',args:[command],func:async command=>{
+        const input=document.querySelector('#one textarea.inputarea, #one .native-edit-context');
+        return new MonacoAdapter()._input(input,'',command);
+      }});
+    return results[0].result;
+  },{tabId,command});
+  const deletionState=()=>editor.evaluate(()=>({text:editors[0].getValue(),
+    selection:editors[0].getSelections().map(selection=>[selection.startLineNumber,selection.startColumn,
+      selection.endLineNumber,selection.endColumn]),other:editors[1].getValue()}));
+  const seedDeletion=async (value='prefixX',start=7,end=start) => editor.evaluate(({value,start,end})=>{
+    window.deletionCleanup?.();delete window.deletionCleanup;
+    if(!window.deletionModel){
+      window.deletionModel=monaco.editor.createModel(editors[0].getValue(),'plaintext');
+      editors[0].setModel(deletionModel);
+    }
+    editors[0].updateOptions({readOnly:false});editors[0].setValue(value);
+    editors[0].setSelection(monaco.Selection.fromPositions(editors[0].getModel().getPositionAt(start),
+      editors[0].getModel().getPositionAt(end)));editors[0].focus();
+  },{value,start,end});
+  // A model version change is insufficient: handlers can transform or revert it.
+  const deletionAcknowledgements=[];
+  for(const command of ['backspace','clear']) for(const queued of [false,true]) {
+    await seedDeletion();
+    await editor.evaluate(queued=>{
+      const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+      const change=event=>{if(event.key==='Backspace'){
+        input.removeEventListener('keyup',change);
+        const apply=()=>editors[0].setValue(queued?'prefixX':'TRANSFORMED');
+        if(queued)queueMicrotask(apply);else apply();
+      }};
+      input.addEventListener('keyup',change);window.deletionCleanup=()=>input.removeEventListener('keyup',change);
+    },queued);
+    const result=await deletion(command);
+    deletionAcknowledgements.push([command,queued,result.success]);
+    assert.equal((await deletionState()).text,queued?'prefixX':'TRANSFORMED');
+  }
+  assert.deepEqual(deletionAcknowledgements,[['backspace',false,false],['backspace',true,false],
+    ['clear',false,false],['clear',true,false]]);
+  console.log('PASS Backspace and Clear reject transformed and microtask-restored deletions');
+  const invalidAcknowledgements=[];
+  for(const command of ['backspace','clear']) for(const queued of [false,true])
+    for(const change of ['remove','readOnly','focus','model','caret','token']) {
+      if(command==='clear' && change==='caret')continue; // An empty model has only one caret position.
+      await seedDeletion();
+      await editor.evaluate(({queued,change})=>{
+        const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+        const model=editors[0].getModel();const parent=input.parentNode;const next=input.nextSibling;
+        let replacement;
+        const hook=event=>{if(event.key==='Backspace'){
+          input.removeEventListener('keyup',hook);
+          const apply=()=>{
+            if(change==='remove')input.remove();
+            if(change==='readOnly')editors[0].updateOptions({readOnly:true});
+            if(change==='focus')editors[1].focus();
+            if(change==='model'){
+              replacement=monaco.editor.createModel(editors[0].getValue(),'plaintext');
+              editors[0].setModel(replacement);
+            }
+            if(change==='caret')editors[0].setPosition({lineNumber:1,column:2});
+            if(change==='token')input.setAttribute('data-paste-typer-target','different-request');
+          };
+          if(queued)queueMicrotask(apply);else apply();
+        }};
+        input.addEventListener('keyup',hook);
+        window.deletionCleanup=()=>{
+          input.removeEventListener('keyup',hook);
+          if(!input.isConnected)parent.insertBefore(input,next?.parentNode===parent?next:null);
+          if(replacement){editors[0].setModel(model);replacement.dispose();}
+          editors[0].updateOptions({readOnly:false});
+        };
+      },{queued,change});
+      const result=await deletion(command);
+      invalidAcknowledgements.push([command,queued,change,result.success]);
+    }
+  assert.deepEqual(invalidAcknowledgements.filter(result=>result[3]),[]);
+  console.log('PASS deletions reject synchronous and queued target, focus, editability, model and caret changes');
+  // Literal outcomes protect surrounding Unicode, CRLF, selections, and undo.
+  for(const fixture of [
+    {value:'A😀Xé尾',start:4,want:'A😀é尾',caret:[1,4,1,4]},
+    {value:'A😀尾',start:3,want:'A尾',caret:[1,2,1,2]},
+    {value:'Ae\u0301尾',start:3,want:'Ae尾',caret:[1,3,1,3]},
+    {value:'A👩🏽‍💻尾',start:8,want:'A👩🏽尾',caret:[1,6,1,6]},
+    {value:'A1️⃣尾',start:4,want:'A1️尾',caret:[1,4,1,4]},
+    {value:'A©️尾',start:3,want:'A©尾',caret:[1,3,1,3]},
+    {value:'A🇨🇦尾',start:5,want:'A🇨尾',caret:[1,4,1,4]},
+    {value:'LEFT\r\n右😀尾',start:6,want:'LEFT右😀尾',caret:[1,5,1,5]},
+    {value:'L😀e\u0301\r\n尾R',start:1,end:8,want:'LR',caret:[1,2,1,2]},
+    {value:'prefixX',start:4,end:1,want:'pixX',caret:[1,2,1,2]}
+  ]) {
+    await seedDeletion(fixture.value,fixture.start,fixture.end??fixture.start);
+    const result=await deletion('backspace');assert.equal(result.success,true,JSON.stringify(fixture));
+    let state=await deletionState();assert.equal(state.text,fixture.want);
+    assert.deepEqual(state.selection,[fixture.caret]);assert.equal(state.other,'SECOND');
+    await editor.evaluate(()=>editors[0].trigger('test','undo'));
+    assert.equal((await deletionState()).text,fixture.value);
+  }
+  await seedDeletion('L😀e\u0301\r\n尾R',3);
+  assert.equal((await deletion('clear')).success,true);
+  assert.deepEqual(await deletionState(),{text:'',selection:[[1,1,1,1]],other:'SECOND'});
+  await editor.evaluate(()=>editors[0].trigger('test','undo'));
+  assert.equal((await deletionState()).text,'L😀e\u0301\r\n尾R');
+  console.log('PASS exact deletion text, caret, range, Unicode, CRLF and Undo');
+  for(const fixture of [
+    {value:'AB😀尾',start:4,changed:'A尾',caret:2},
+    {value:'A😀尾',start:3,changed:'A\uD83D尾',caret:3}
+  ]) {
+    await seedDeletion(fixture.value,fixture.start);
+    await editor.evaluate(fixture=>{
+      const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+      const hook=event=>{if(event.key==='Backspace'){
+        editors[0].setValue(fixture.changed);editors[0].setPosition({lineNumber:1,column:fixture.caret});
+      }};
+      input.addEventListener('keyup',hook);window.deletionCleanup=()=>input.removeEventListener('keyup',hook);
+    },fixture);
+    assert.equal((await deletion('backspace')).success,false);
+    assert.equal((await deletionState()).text,fixture.changed);
+  }
+  console.log('PASS native Backspace cannot acknowledge deletion into another grapheme or splitting a surrogate pair');
+  await seedDeletion('prefixX',7);
+  await editor.evaluate(()=>editors[0].setSelections([new monaco.Selection(1,2,1,2),new monaco.Selection(1,5,1,5)]));
+  assert.equal((await deletion('backspace')).success,false);
+  assert.equal((await deletionState()).text,'prefixX');
+  assert.equal((await deletion('clear')).success,true);
+  assert.deepEqual(await deletionState(),{text:'',selection:[[1,1,1,1]],other:'SECOND'});
+  await editor.evaluate(()=>editors[0].trigger('test','undo'));
+  assert.equal((await deletionState()).text,'prefixX');
+  await seedDeletion('',0);
+  assert.equal((await deletion('clear')).success,true);
+  assert.deepEqual(await deletionState(),{text:'',selection:[[1,1,1,1]],other:'SECOND'});
+  assert.equal((await deletion('backspace')).success,false);
+  console.log('PASS Clear handles multiple carets and empty text; Backspace cannot acknowledge a multi-edit or no-op');
+  await seedDeletion('prefixX',0);
+  await editor.evaluate(()=>{
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    const hook=event=>{if(event.key==='a')queueMicrotask(()=>editors[0].setPosition({lineNumber:1,column:3}));};
+    input.addEventListener('keyup',hook);window.deletionCleanup=()=>input.removeEventListener('keyup',hook);
+  });
+  assert.equal((await deletion('clear')).success,false);
+  assert.equal((await deletionState()).text,'prefixX');
+  console.log('PASS Clear waits for Select All handlers before deleting');
+  await seedDeletion('prefixX',7);
+  await editor.evaluate(()=>{
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    const hook=event=>{if(event.key==='Backspace')queueMicrotask(()=>editors[0].setValue('prefixX'));};
+    input.addEventListener('keyup',hook);window.deletionCleanup=()=>input.removeEventListener('keyup',hook);
+  });
+  const revertedClear=await route({action:'resetTyping'});
+  assert.equal(revertedClear.success,false);assert.equal((await deletionState()).text,'prefixX');
+  console.log('PASS resetTyping reports queued Clear restoration before acknowledging');
+  await seedDeletion('abcdef',3);
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});await waitDone();
   assert.deepEqual(await read(),['abcXYZdef','SECOND']);assert.equal(await page.locator('#outside').inputValue(),'OUTSIDE');console.log('PASS cross-origin target + middle insertion + unrelated editor untouched');
   await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','undo');});assert.equal((await read())[0],'abcdef');console.log('PASS undo');
+  await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','redo');});
+  assert.equal((await read())[0],'abcXYZdef');
+  await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','undo');});
+  assert.equal((await read())[0],'abcdef');console.log('PASS redo and undo retain the inserted text');
   await editor.evaluate(()=>editors[1].setSelection({startLineNumber:1,startColumn:2,endLineNumber:1,endColumn:5}));
-  await editor.locator('#two textarea.inputarea').focus();
+  await editor.locator(`#two ${inputSelector}`).focus();
   const commandCount=()=>worker.evaluate(()=>testRoutedCommands.length);
   const startCount=()=>worker.evaluate(()=>testRoutedCommands.filter(action=>action==='startTyping').length);
   const forgeMessages=()=>page.evaluate(()=>{
@@ -139,14 +316,14 @@ const server = http.createServer((req,res)=>{
   assert.equal(await startCount()-baseline,1);
   assert.deepEqual(await read(),['abcdef','SselectionND']);console.log('PASS floating UI retains selected editor and selection');
   await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));
-  await editor.locator('#two textarea.inputarea').focus();
+  await editor.locator(`#two ${inputSelector}`).focus();
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('K');
   await page.locator('#paste-typer-floating-ui').locator('#speedSlider').fill('10');
   await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').fill('0');
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').press('Enter');
   await page.locator('#paste-typer-floating-ui').locator('#status').filter({hasText:'Typing started!'}).waitFor();await waitDone();
   assert.equal((await read())[1],'SKselectionND');console.log('PASS trusted keyboard activation starts typing');
-  await editor.locator('#two textarea.inputarea').focus();
+  await editor.locator(`#two ${inputSelector}`).focus();
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('R'.repeat(200));
   await page.locator('#paste-typer-floating-ui').locator('#speedSlider').fill('25');
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').click();
@@ -192,14 +369,14 @@ const server = http.createServer((req,res)=>{
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').inputValue(),'11');
   console.log('PASS clipboard handler and settings persist through close/reopen and panel recreation');
   await editor.evaluate(()=>{editors[1].setValue('SselectionND');editors[1].setPosition({lineNumber:1,column:2});});
-  await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));await editor.locator('#two textarea.inputarea').focus();
+  await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));await editor.locator(`#two ${inputSelector}`).focus();
   await route({action:'startTyping',text:'\nQ',speed:10,typoChance:0,targetElement:true});await waitDone();assert.equal((await read())[1],'S\nQselectionND');console.log('PASS newline');
   // Real native key handling for typo correction.
   await route({action:'startTyping',text:'abcdefghij',speed:10,typoChance:1,targetElement:true});await waitDone();assert.ok((await read())[1].includes('QabcdefghijselectionND'));console.log('PASS forced typo + backspace corrections');
   await route({action:'resetTyping'});assert.equal((await read())[1],'');assert.equal((await read())[0],'abcdef');console.log('PASS explicit clear only selected Monaco');
   // Repeated discovery does not redeclare classes or duplicate UI listeners.
   await Promise.all([prepare(),prepare(),prepare()]);console.log('PASS concurrent/repeated injection');
-  await editor.locator('#one textarea.inputarea').focus();
+  await editor.locator(`#one ${inputSelector}`).focus();
   await editor.evaluate(()=>editors[0].setPosition({lineNumber:1,column:3}));
   const popup=await context.newPage();await popup.goto(`chrome-extension://${extensionInfo.id}/popup.html`);
   // A headless extension-page tab is itself "active"; the test scope pins tabs
@@ -222,8 +399,9 @@ const server = http.createServer((req,res)=>{
     const names=['autoIndent','autoClosingBrackets','autoClosingQuotes','autoClosingOvertype','autoSurround','formatOnType','acceptSuggestionOnEnter'];
     window.inputOptionsBefore=names.map(name=>editors[0].getOption(monaco.editor.EditorOption[name]));
     window.inputEvents=[];window.pasteCount=0;
-    const input=editors[0].getDomNode().querySelector('textarea.inputarea');
-    input.addEventListener('input',event=>inputEvents.push(event.inputType));
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    if(input.editContext) input.editContext.addEventListener('textupdate',()=>inputEvents.push('insertText'));
+    else input.addEventListener('input',event=>inputEvents.push(event.inputType));
     input.addEventListener('paste',()=>pasteCount++);
     // Prove this path uses editor input handlers, never direct executeEdits.
     editors[0].executeEdits=()=>{throw Error('Direct model edits are prohibited by this test');};
@@ -237,20 +415,61 @@ const server = http.createServer((req,res)=>{
   assert.equal(inputProof.pasteCount,0);assert.ok(inputProof.inputEvents.length>0);
   assert.ok(inputProof.inputEvents.every(type=>type==='insertText'));
   assert.deepEqual(inputProof.after,inputProof.before);console.log('PASS simulated input only, no paste/model edits, editor options restored');
+  if(nativeEditContext){
+    await page.bringToFront();await editor.locator(`#one ${inputSelector}`).focus();
+    await page.keyboard.type('!');assert.equal((await read())[0],code+'!');
+    await page.keyboard.press('Backspace');assert.equal((await read())[0],code);
+    console.log('PASS native keyboard input remains correct after simulated typing');
+  }
   await editor.evaluate(()=>{
     editors[0].setValue('UNCHANGED');editors[0].setPosition({lineNumber:1,column:1});editors[0].focus();
     window.blockKey=event=>{if(event.key==='X')event.preventDefault();};
-    editors[0].getDomNode().querySelector('textarea.inputarea').addEventListener('keydown',blockKey,true);
+    editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context').addEventListener('keydown',blockKey,true);
   });
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});
   let failed;
   for(let i=0;i<100;i++){failed=await route({action:'getTypingProgress'});if(!failed.isTyping)break;await new Promise(r=>setTimeout(r,30));}
   assert.ok(failed.error.includes('intercepted'));assert.equal((await read())[0],'UNCHANGED');
   const afterFailure=await editor.evaluate(()=>{
-    editors[0].getDomNode().querySelector('textarea.inputarea').removeEventListener('keydown',blockKey,true);
+    editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context').removeEventListener('keydown',blockKey,true);
     return ['autoIndent','autoClosingBrackets','autoClosingQuotes','autoClosingOvertype','autoSurround','formatOnType','acceptSuggestionOnEnter'].map(name=>editors[0].getOption(monaco.editor.EditorOption[name]));
   });
   assert.deepEqual(afterFailure,inputProof.before);console.log('PASS intercepted input fails, preserves text and restores options');
+  if(nativeEditContext){
+    const nativeBefore=await editor.evaluate(()=>{
+      const context=editors[0].getDomNode().querySelector('.native-edit-context').editContext;
+      // EditContext is a plain EventTarget with no DOM capture ancestry. Drop
+      // this one event at its dispatch boundary to simulate a rejected input.
+      window.nativeDispatch=context.dispatchEvent;
+      context.dispatchEvent=event=>event.type==='textupdate' ? true : nativeDispatch.call(context,event);
+      return {text:context.text,start:context.selectionStart,end:context.selectionEnd};
+    });
+    await route({action:'startTyping',text:'Z',speed:10,typoChance:0,targetElement:true});
+    for(let i=0;i<100;i++){failed=await route({action:'getTypingProgress'});if(!failed.isTyping)break;await new Promise(r=>setTimeout(r,30));}
+    assert.match(failed.error,/did not accept/);assert.equal((await read())[0],'UNCHANGED');
+    const nativeAfter=await editor.evaluate(()=>{
+      const context=editors[0].getDomNode().querySelector('.native-edit-context').editContext;
+      context.dispatchEvent=nativeDispatch;
+      return {text:context.text,start:context.selectionStart,end:context.selectionEnd};
+    });
+    assert.deepEqual(nativeAfter,nativeBefore);
+    console.log('PASS rejected native text restores its input buffer and reports model rejection');
+  }
+  await editor.evaluate(()=>editors[0].updateOptions({readOnly:true}));
+  const readOnlyClear=await route({action:'resetTyping'});
+  assert.equal(readOnlyClear.success,false);assert.match(readOnlyClear.error,/not editable/);
+  assert.equal((await read())[0],'UNCHANGED');
+  await editor.evaluate(()=>editors[0].updateOptions({readOnly:false}));
+  console.log('PASS Clear rejects a read-only Monaco model');
+  await editor.evaluate(()=>{
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    input.addEventListener('keydown',()=>input.remove(),{once:true});editors[0].focus();
+  });
+  await route({action:'startTyping',text:'R',speed:10,typoChance:0,targetElement:true});
+  for(let i=0;i<100;i++){failed=await route({action:'getTypingProgress'});if(!failed.isTyping)break;await new Promise(r=>setTimeout(r,30));}
+  assert.match(failed.error,/removed|no longer/);assert.equal((await read())[0],'UNCHANGED');
+  assert.equal((await read())[1],'');
+  console.log('PASS removal during a key event cannot insert into a detached editor');
   await worker.evaluate(tabId=>chrome.scripting.executeScript({target:{tabId,frameIds:[0]},world:'ISOLATED',func:()=>{
     // Force failure after markup import, as in the reported missing controller.
     FloatingUIController=class { constructor(){throw Error('fixture controller initialization failure');} };
