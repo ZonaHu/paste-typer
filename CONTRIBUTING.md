@@ -61,6 +61,9 @@ open each UI, and verify exact text, Undo/Redo, and that another editor is untou
 Check permission denial and iframe navigation/removal. Do not rely on Monaco's
 hidden textarea value to verify the document; verify its model or visible content.
 Include Monaco 0.45 and a newer release, with auto-indent and auto-closing enabled.
+Backspace follows Monaco's native Unicode deletion semantics, which can remove an
+emoji component or combining mark. The bridge verifies the exact resulting text
+and a single caret within the preceding grapheme before acknowledging deletion.
 Verify literal multiline code, keyboard/text-input events without clipboard paste,
 and immediate restoration of editor options after successful and interrupted input.
 

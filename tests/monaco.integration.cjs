@@ -82,6 +82,161 @@ const server = http.createServer((req,res)=>{
   await worker.evaluate(async tabId=>{await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>{if(typeof pasteTyper!=='undefined')pasteTyper.pauseChance=0;}});},tabId);
   const read=()=>editor.evaluate(()=>editors.map(e=>e.getValue().replace(/\r\n/g,'\n')));
   const waitDone=async()=>{for(let i=0;i<1500;i++){const r=await route({action:'getTypingProgress'});if(!r.isTyping){assert.equal(r.error,null);return;}await new Promise(r=>setTimeout(r,30));}throw Error('typing timed out');};
+  // Exercise the real isolated-to-MAIN bridge rather than a model-edit mock.
+  const deletion = command => worker.evaluate(async ({tabId,command}) => {
+    const frames=await frameRouter.frames(tabId);
+    const frame=frames.find(candidate=>candidate.url.endsWith('/editor'));
+    const results=await chrome.scripting.executeScript({target:{tabId,documentIds:[frame.documentId]},
+      world:'ISOLATED',args:[command],func:async command=>{
+        const input=document.querySelector('#one textarea.inputarea, #one .native-edit-context');
+        return new MonacoAdapter()._input(input,'',command);
+      }});
+    return results[0].result;
+  },{tabId,command});
+  const deletionState=()=>editor.evaluate(()=>({text:editors[0].getValue(),
+    selection:editors[0].getSelections().map(selection=>[selection.startLineNumber,selection.startColumn,
+      selection.endLineNumber,selection.endColumn]),other:editors[1].getValue()}));
+  const seedDeletion=async (value='prefixX',start=7,end=start) => editor.evaluate(({value,start,end})=>{
+    window.deletionCleanup?.();delete window.deletionCleanup;
+    if(!window.deletionModel){
+      window.deletionModel=monaco.editor.createModel(editors[0].getValue(),'plaintext');
+      editors[0].setModel(deletionModel);
+    }
+    editors[0].updateOptions({readOnly:false});editors[0].setValue(value);
+    editors[0].setSelection(monaco.Selection.fromPositions(editors[0].getModel().getPositionAt(start),
+      editors[0].getModel().getPositionAt(end)));editors[0].focus();
+  },{value,start,end});
+  // A model version change is insufficient: handlers can transform or revert it.
+  const deletionAcknowledgements=[];
+  for(const command of ['backspace','clear']) for(const queued of [false,true]) {
+    await seedDeletion();
+    await editor.evaluate(queued=>{
+      const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+      const change=event=>{if(event.key==='Backspace'){
+        input.removeEventListener('keyup',change);
+        const apply=()=>editors[0].setValue(queued?'prefixX':'TRANSFORMED');
+        if(queued)queueMicrotask(apply);else apply();
+      }};
+      input.addEventListener('keyup',change);window.deletionCleanup=()=>input.removeEventListener('keyup',change);
+    },queued);
+    const result=await deletion(command);
+    deletionAcknowledgements.push([command,queued,result.success]);
+    assert.equal((await deletionState()).text,queued?'prefixX':'TRANSFORMED');
+  }
+  assert.deepEqual(deletionAcknowledgements,[['backspace',false,false],['backspace',true,false],
+    ['clear',false,false],['clear',true,false]]);
+  console.log('PASS Backspace and Clear reject transformed and microtask-restored deletions');
+  const invalidAcknowledgements=[];
+  for(const command of ['backspace','clear']) for(const queued of [false,true])
+    for(const change of ['remove','readOnly','focus','model','caret','token']) {
+      if(command==='clear' && change==='caret')continue; // An empty model has only one caret position.
+      await seedDeletion();
+      await editor.evaluate(({queued,change})=>{
+        const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+        const model=editors[0].getModel();const parent=input.parentNode;const next=input.nextSibling;
+        let replacement;
+        const hook=event=>{if(event.key==='Backspace'){
+          input.removeEventListener('keyup',hook);
+          const apply=()=>{
+            if(change==='remove')input.remove();
+            if(change==='readOnly')editors[0].updateOptions({readOnly:true});
+            if(change==='focus')editors[1].focus();
+            if(change==='model'){
+              replacement=monaco.editor.createModel(editors[0].getValue(),'plaintext');
+              editors[0].setModel(replacement);
+            }
+            if(change==='caret')editors[0].setPosition({lineNumber:1,column:2});
+            if(change==='token')input.setAttribute('data-paste-typer-target','different-request');
+          };
+          if(queued)queueMicrotask(apply);else apply();
+        }};
+        input.addEventListener('keyup',hook);
+        window.deletionCleanup=()=>{
+          input.removeEventListener('keyup',hook);
+          if(!input.isConnected)parent.insertBefore(input,next?.parentNode===parent?next:null);
+          if(replacement){editors[0].setModel(model);replacement.dispose();}
+          editors[0].updateOptions({readOnly:false});
+        };
+      },{queued,change});
+      const result=await deletion(command);
+      invalidAcknowledgements.push([command,queued,change,result.success]);
+    }
+  assert.deepEqual(invalidAcknowledgements.filter(result=>result[3]),[]);
+  console.log('PASS deletions reject synchronous and queued target, focus, editability, model and caret changes');
+  // Literal outcomes protect surrounding Unicode, CRLF, selections, and undo.
+  for(const fixture of [
+    {value:'A😀Xé尾',start:4,want:'A😀é尾',caret:[1,4,1,4]},
+    {value:'A😀尾',start:3,want:'A尾',caret:[1,2,1,2]},
+    {value:'Ae\u0301尾',start:3,want:'Ae尾',caret:[1,3,1,3]},
+    {value:'A👩🏽‍💻尾',start:8,want:'A👩🏽尾',caret:[1,6,1,6]},
+    {value:'A1️⃣尾',start:4,want:'A1️尾',caret:[1,4,1,4]},
+    {value:'A©️尾',start:3,want:'A©尾',caret:[1,3,1,3]},
+    {value:'A🇨🇦尾',start:5,want:'A🇨尾',caret:[1,4,1,4]},
+    {value:'LEFT\r\n右😀尾',start:6,want:'LEFT右😀尾',caret:[1,5,1,5]},
+    {value:'L😀e\u0301\r\n尾R',start:1,end:8,want:'LR',caret:[1,2,1,2]},
+    {value:'prefixX',start:4,end:1,want:'pixX',caret:[1,2,1,2]}
+  ]) {
+    await seedDeletion(fixture.value,fixture.start,fixture.end??fixture.start);
+    const result=await deletion('backspace');assert.equal(result.success,true,JSON.stringify(fixture));
+    let state=await deletionState();assert.equal(state.text,fixture.want);
+    assert.deepEqual(state.selection,[fixture.caret]);assert.equal(state.other,'SECOND');
+    await editor.evaluate(()=>editors[0].trigger('test','undo'));
+    assert.equal((await deletionState()).text,fixture.value);
+  }
+  await seedDeletion('L😀e\u0301\r\n尾R',3);
+  assert.equal((await deletion('clear')).success,true);
+  assert.deepEqual(await deletionState(),{text:'',selection:[[1,1,1,1]],other:'SECOND'});
+  await editor.evaluate(()=>editors[0].trigger('test','undo'));
+  assert.equal((await deletionState()).text,'L😀e\u0301\r\n尾R');
+  console.log('PASS exact deletion text, caret, range, Unicode, CRLF and Undo');
+  for(const fixture of [
+    {value:'AB😀尾',start:4,changed:'A尾',caret:2},
+    {value:'A😀尾',start:3,changed:'A\uD83D尾',caret:3}
+  ]) {
+    await seedDeletion(fixture.value,fixture.start);
+    await editor.evaluate(fixture=>{
+      const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+      const hook=event=>{if(event.key==='Backspace'){
+        editors[0].setValue(fixture.changed);editors[0].setPosition({lineNumber:1,column:fixture.caret});
+      }};
+      input.addEventListener('keyup',hook);window.deletionCleanup=()=>input.removeEventListener('keyup',hook);
+    },fixture);
+    assert.equal((await deletion('backspace')).success,false);
+    assert.equal((await deletionState()).text,fixture.changed);
+  }
+  console.log('PASS native Backspace cannot acknowledge deletion into another grapheme or splitting a surrogate pair');
+  await seedDeletion('prefixX',7);
+  await editor.evaluate(()=>editors[0].setSelections([new monaco.Selection(1,2,1,2),new monaco.Selection(1,5,1,5)]));
+  assert.equal((await deletion('backspace')).success,false);
+  assert.equal((await deletionState()).text,'prefixX');
+  assert.equal((await deletion('clear')).success,true);
+  assert.deepEqual(await deletionState(),{text:'',selection:[[1,1,1,1]],other:'SECOND'});
+  await editor.evaluate(()=>editors[0].trigger('test','undo'));
+  assert.equal((await deletionState()).text,'prefixX');
+  await seedDeletion('',0);
+  assert.equal((await deletion('clear')).success,true);
+  assert.deepEqual(await deletionState(),{text:'',selection:[[1,1,1,1]],other:'SECOND'});
+  assert.equal((await deletion('backspace')).success,false);
+  console.log('PASS Clear handles multiple carets and empty text; Backspace cannot acknowledge a multi-edit or no-op');
+  await seedDeletion('prefixX',0);
+  await editor.evaluate(()=>{
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    const hook=event=>{if(event.key==='a')queueMicrotask(()=>editors[0].setPosition({lineNumber:1,column:3}));};
+    input.addEventListener('keyup',hook);window.deletionCleanup=()=>input.removeEventListener('keyup',hook);
+  });
+  assert.equal((await deletion('clear')).success,false);
+  assert.equal((await deletionState()).text,'prefixX');
+  console.log('PASS Clear waits for Select All handlers before deleting');
+  await seedDeletion('prefixX',7);
+  await editor.evaluate(()=>{
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    const hook=event=>{if(event.key==='Backspace')queueMicrotask(()=>editors[0].setValue('prefixX'));};
+    input.addEventListener('keyup',hook);window.deletionCleanup=()=>input.removeEventListener('keyup',hook);
+  });
+  const revertedClear=await route({action:'resetTyping'});
+  assert.equal(revertedClear.success,false);assert.equal((await deletionState()).text,'prefixX');
+  console.log('PASS resetTyping reports queued Clear restoration before acknowledging');
+  await seedDeletion('abcdef',3);
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});await waitDone();
   assert.deepEqual(await read(),['abcXYZdef','SECOND']);assert.equal(await page.locator('#outside').inputValue(),'OUTSIDE');console.log('PASS cross-origin target + middle insertion + unrelated editor untouched');
   await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','undo');});assert.equal((await read())[0],'abcdef');console.log('PASS undo');
