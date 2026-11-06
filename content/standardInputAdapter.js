@@ -156,7 +156,13 @@ class StandardInputAdapter extends InputAdapter {
           if (original.hasSelection) element.setSelectionRange(expectedCaret, expectedCaret);
         } else {
           const range = document.createRange();
-          const first = this._textPoint(element, from), last = this._textPoint(element, to);
+          // Equal text offsets can sit on different sides of a paragraph or
+          // formatting boundary. Keep the actual DOM endpoints unless backspace
+          // expands that endpoint to include the preceding grapheme.
+          const first = from === original.start
+            ? { node: original.startNode, offset: original.startOffset } : this._textPoint(element, from);
+          const last = to === original.end
+            ? { node: original.endNode, offset: original.endOffset } : this._textPoint(element, to);
           range.setStart(first.node, first.offset); range.setEnd(last.node, last.offset);
           range.deleteContents();
           if (!deleting) {

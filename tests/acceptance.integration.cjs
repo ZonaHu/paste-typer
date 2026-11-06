@@ -135,6 +135,29 @@ editor.getModel().setEOL(monaco.editor.EndOfLineSequence.CRLF);editor.setPositio
         }, args: [{ field, operation }] });
       return injected.result;
     }, { tabId, field, operation });
+    for (const boundary of ['inline', 'paragraph', 'empty-paragraph', 'replacement', 'selected-deletion']) {
+      await check(`rich preserves ${boundary} DOM range boundaries`, async () => {
+        await prepare('rich');
+        await page.locator('#rich').evaluate((element, boundary) => {
+          element.innerHTML = boundary === 'inline' ? '<b>left</b><i>right</i>'
+            : boundary === 'empty-paragraph' ? '<p>A</p><p><br></p>' : '<p>A</p><p>B</p>';
+          const range = document.createRange();
+          if (boundary === 'inline') range.setStart(element, 1);
+          else if (boundary === 'empty-paragraph') range.setStart(element.children[1], 0);
+          else range.setStart(element.children[1].firstChild, 0);
+          if (['replacement', 'selected-deletion'].includes(boundary)) range.setEnd(element.children[1].firstChild, 1);
+          else range.collapse(true);
+          getSelection().removeAllRanges(); getSelection().addRange(range);
+        }, boundary);
+        const result = await directEdit('rich', boundary === 'selected-deletion' ? 'backspace' : 'type');
+        assert.equal(result.success, true, result.error);
+        const markup = await page.locator('#rich').innerHTML();
+        const expected = { inline: '<b>left</b>X<i>right</i>', paragraph: '<p>A</p><p>XB</p>',
+          'empty-paragraph': '<p>A</p><p>X<br></p>', replacement: '<p>A</p><p>X</p>',
+          'selected-deletion': '<p>A</p><p></p>' };
+        assert.equal(markup, expected[boundary]);
+      });
+    }
     const installHook = (field, stage, effect, operation, defer = false) => page.evaluate(({ field, stage, effect, operation, defer }) => {
       const element = document.getElementById(field);
       window.editEvents = [];
