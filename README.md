@@ -41,6 +41,7 @@ Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input
 - **Right-click → "Paste as typed text"** on any editable field
 - **Adjustable speed and typo rate**
 - **Floating in-page UI**, draggable, isolated in a Shadow DOM
+- **Shared Start, Pause/Resume, and Stop controls** across the popup and floating UI
 - **Google Docs and Slides support** via a canvas-editor adapter
 - **Monaco textarea-based editors**, including editors in embedded frames
 - **Input navigation mode** to step through editable fields on a page
@@ -66,8 +67,17 @@ git clone https://github.com/ZonaHu/paste-typer.git
 
 Start inserts at your caret or replaces only selected text, preserving the rest
 of the field. **Clear entire field** explicitly deletes all content in the selected field.
+Start remains unavailable while Clear is working. Stop cancels pending Clear steps
+and waits for any edit already dispatched before reporting that it has stopped.
 
 **Right-click menu** — copy text, right-click the target field, choose "Paste as typed text".
+
+**Stop shortcut** — press **Ctrl+Shift+K** (**Command+Shift+K** on macOS) to
+send Stop to the running or paused session in the current tab, including a
+permitted embedded editor. The popup and floating panel can both be closed.
+Choose or change the binding at `chrome://extensions/shortcuts` if the suggested
+key is already in use. It works while Chrome has focus; it does not stop sessions
+in other tabs.
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 

@@ -166,10 +166,11 @@ const server = http.createServer((req, res) => {
     await popup.locator('#status').filter({ hasText: 'Typing started!' }).waitFor();
     await waitDone(); await verify('input', 'abcXYZghi');
     await popup.evaluate(() => {
+      window.mockSession = 999;
       chrome.runtime.sendMessage = async request => {
-        if (request.message?.action === 'startTyping') return { success: true };
+        if (request.message?.action === 'startTyping') { window.mockSession++; return { success: true }; }
         if (request.message?.action === 'getTypingProgress') return {
-          position: 1, total: 1, isTyping: false, isPaused: false,
+          sessionId: window.mockSession, state: 'completed', position: 1, total: 1, isTyping: false, isPaused: false,
           error: null, deliveryVerified: false
         };
         return { success: true };
@@ -186,7 +187,7 @@ const server = http.createServer((req, res) => {
       };
     });
     await popup.locator('#startTyping').click();
-    await popup.locator('#status').filter({ hasText: 'Lost connection to typing session: Paste Typer lost its connection.' }).waitFor();
+    await popup.locator('#status').filter({ hasText: 'Paste Typer lost its connection.' }).waitFor();
     assert.equal(await popup.locator('#startTyping').isVisible(), true);
     assert.equal(await popup.locator('#stopTyping').isVisible(), false);
     console.log('PASS popup progress connection loss is visible and restores Start');

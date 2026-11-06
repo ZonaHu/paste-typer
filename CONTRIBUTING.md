@@ -137,6 +137,10 @@ browser profile. Localhost permissions are pregranted only in the disposable
 extension copy, while permission denial is covered by the Node tests. The popup
 is represented by an extension-page tab whose tab query is pinned to the fixture.
 No test dependencies are needed to run or build the extension itself.
+Run the Chrome suites sequentially. Concurrent disposable Chrome runs produced
+intermittent model-wait timeouts during review; sequential Monaco 0.45/0.57 and
+forced-typo runs passed. The harness logs model, session, and panel state on a
+text mismatch so a future recurrence can be investigated.
 
 Floating UI controls run in the content script's isolated world. Changes to them
 must preserve the trusted-event checks: page scripts must not start/stop typing
@@ -155,6 +159,24 @@ inert controls before a visible textarea:
 ```bash
 PT_TEST_DEPS=/path/to/test-deps node tests/targetSelection.integration.cjs
 ```
+
+The stop command has a disposable Chrome regression:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/stopCommand.integration.cjs
+```
+
+It verifies Chrome's command registration and invokes the production handler to
+stop running/paused sessions. The Node tests invoke the registered command
+listener and verify cross-origin frame routing. Physical key binding and OS
+shortcut conflicts still need a manual check at `chrome://extensions/shortcuts`.
+
+For session controls, also run `node --test tests/sessionState.test.cjs` and
+`PT_TEST_DEPS=/path/to/test-deps node tests/sessionState.integration.cjs`.
+These cover cancellation during target discovery, Stop acknowledgement after an
+in-flight edit, Pause during typo correction, popup reopen, and cross-UI state
+after Stop/Clear and back-to-back short sessions. Both visible UIs poll the same
+session ID and phase; Stop invalidates delayed work before acknowledging.
 
 ## Code style
 

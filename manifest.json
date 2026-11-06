@@ -12,6 +12,15 @@
     "clipboardRead"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "commands": {
+    "stop-typing": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Stop typing in the current tab"
+    }
+  },
   "background": {
     "service_worker": "background.js"
   },
