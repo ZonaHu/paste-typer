@@ -98,7 +98,19 @@ const server = http.createServer((req, res) => {
       await route({ action: 'startTyping', text: 'long enough to stop', typoChance: 0 });
       await popup.locator('#stopTyping').waitFor({ state: 'visible' });
       await popup.locator('#' + action).click();
-      await popup.locator('#status').filter({ hasText: action === 'stopTyping' ? 'Typing stopped' : 'cleared' }).waitFor();
+      if (action === 'stopTyping') {
+        await popup.locator('#status').filter({ hasText: 'Typing stopped' }).waitFor();
+      } else {
+        // Progress polling may replace the Clear receipt with the engine's
+        // terminal stopped status. Verify the operation and ready controls.
+        await page.waitForFunction(() => document.getElementById('textarea').value === '');
+        await popup.locator('#startTyping:enabled').waitFor();
+        const settled = await route({ action: 'getTypingProgress' });
+        assert.equal(settled.state, 'stopped');
+        assert.equal(settled.isTyping, false);
+        assert.equal(settled.error, null);
+        assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
+      }
       await panel.locator('#textInput').fill('R');
       await panel.locator('#startTyping').click();
       await popup.locator('#status').filter({ hasText: 'Typing complete' }).waitFor();
