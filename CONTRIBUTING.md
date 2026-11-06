@@ -83,6 +83,43 @@ extension copy, while permission denial is covered by the Node tests. The popup
 is represented by an extension-page tab whose tab query is pinned to the fixture.
 No test dependencies are needed to run or build the extension itself.
 
+For CodeMirror 6 changes, use `tests/codeMirror.integration.cjs` with a local
+real-editor fixture and disposable Chrome profile. Install test-only dependencies
+outside the repository:
+
+```bash
+npm install --prefix /tmp/paste-typer-cm6-test --no-save --package-lock=false playwright@1.56.1 esbuild@0.25.0 @codemirror/state@6.5.2 @codemirror/view@6.36.2 @codemirror/commands@6.8.1
+PT_TEST_DEPS=/tmp/paste-typer-cm6-test node tests/codeMirror.integration.cjs
+```
+
+Repeat with `@codemirror/state@6.7.6`, `@codemirror/view@6.41.0`, and
+`@codemirror/commands@6.11.1` (include Playwright and esbuild in the install again).
+If editor dependencies are in a separate directory, set `PT_CODEMIRROR_DEPS` to
+that directory; `PT_TEST_DEPS` still locates Playwright. The fixture bundles the
+libraries only for its local page; the shipped extension has no dependencies.
+It verifies model text and UTF-16 selection offsets, per-character transactions,
+reversed selections, full Unicode graphemes, multiple carets, literal newlines,
+configured line separators, native Undo/Redo, explicit Clear, read-only/filter
+rejection, interrupted dispatch, stale view metadata, unrelated-editor safety,
+forged page events, cross-origin routing, popup/floating controls, Stop and removal.
+The typing engine's Unicode segmentation is tested separately; the adapter's
+full-grapheme cases invoke its real runtime bridge directly. Lone UTF-16
+surrogates are rejected; a complete combining or ZWJ sequence remains one
+transaction, including graphemes longer than 32 code units.
+
+The bridge resolves the selected page view through the metadata used by the
+public `EditorView.findFromDOM` implementation, then validates that view's DOM
+identity. CodeMirror 6.36.2 uses
+[`cmView.rootView.view`](https://github.com/codemirror/view/blob/6.36.2/src/editorview.ts);
+6.41.0 uses [`cmTile.root.view`](https://github.com/codemirror/view/blob/6.41.0/src/editorview.ts).
+These internal metadata names can change, so verify each claimed version and fail
+without a DOM-edit fallback when resolution is unavailable. The public
+[`EditorState.replaceSelection` API](https://github.com/codemirror/state/blob/main/src/state.ts)
+preserves native selection semantics; the `input.type` user event lets the
+[history extension](https://github.com/codemirror/commands/blob/main/src/history.ts)
+group adjacent typed transactions normally. No site-specific support is claimed
+by this local fixture alone.
+
 Floating UI controls run in the content script's isolated world. Changes to them
 must preserve the trusted-event checks: page scripts must not start/stop typing
 or access extension settings through window messages or synthetic DOM events.

@@ -43,6 +43,7 @@ Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input
 - **Floating in-page UI**, draggable, isolated in a Shadow DOM
 - **Google Docs and Slides support** via a canvas-editor adapter
 - **Monaco textarea-based editors**, including editors in embedded frames
+- **CodeMirror 6 editors**, using editor transactions and native undo history
 - **Input navigation mode** to step through editable fields on a page
 - **Zero dependencies, zero network requests** — everything runs locally
 
@@ -83,6 +84,13 @@ enters through keyboard/text-input events, not clipboard paste or direct model
 edits. Newer Monaco configurations using EditContext rather than a textarea
 are not supported yet. Chrome 106 or newer is required.
 
+CodeMirror 6 uses the selected editor view's transaction API to insert each
+character, preserving its model selection and native undo history. The adapter
+requires the standard document-hosted `.cm-editor` / `.cm-content` view metadata;
+versions 6.36.2 and 6.41.0 are verified with a local real-editor fixture. If the
+view cannot be resolved or rejects the edit, typing stops with an error. No
+CodeMirror library is bundled with the extension.
+
 ## Supported fields
 
 | Field type | Supported |
@@ -92,10 +100,11 @@ are not supported yet. Chrome 106 or newer is required.
 | `contenteditable` | ✅ |
 | Google Docs / Slides canvas | ✅ |
 | Monaco textarea-based editor (including permitted iframes) | ✅ |
+| CodeMirror 6 (verified 6.36.2 and 6.41.0, including permitted iframes) | ✅ |
 
 ## How it works
 
-The content script is injected on demand, only when you invoke the extension. An adapter manager picks the right input adapter for the page, focuses the target field, and types one character at a time — dispatching the full keyboard event sequence for each character, with randomized delays and optional typos so the input looks human.
+The content script is injected on demand, only when you invoke the extension. An adapter manager picks the right input adapter for the page, focuses the target field, and types one character at a time, with randomized delays and optional typos. Adapters use keyboard/text-input events or the editor's transaction API as appropriate; CodeMirror transactions are marked as typed input for native undo grouping.
 
 ```
 manifest.json        MV3 config
@@ -106,6 +115,7 @@ content/
   standardInputAdapter.js  <input> / <textarea> / contenteditable
   googleDocsAdapter.js     Google Docs & Slides canvas editor
   monacoAdapter.js         Monaco keyboard/text input with temporary option suppression
+  codeMirrorAdapter.js     CodeMirror 6 transactions through a document-scoped bridge
   targetTracker.js         remembers the selected field and native selection
   adapterManager.js        picks the adapter for the page
 frameRouter.js             selects and addresses a single permitted frame
