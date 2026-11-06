@@ -3,7 +3,8 @@
 const PT_CONTENT_FILES = [
   'content/inputAdapter.js', 'content/targetTracker.js',
   'content/googleDocsAdapter.js', 'content/standardInputAdapter.js',
-  'content/monacoAdapter.js', 'content/adapterManager.js', 'floating-ui.js', 'content.js'
+  'content/monacoAdapter.js', 'content/proseMirrorAdapter.js',
+  'content/adapterManager.js', 'floating-ui.js', 'content.js'
 ];
 
 class FrameRouter {
@@ -236,6 +237,197 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   chrome.scripting.executeScript({
     target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
     world: 'MAIN', func: simulateMonacoInput, args: [request.token, request.text]
+  }).then(results => sendResponse(results[0]?.result ||
+    { success: false, error: 'The selected editor is no longer available.' }))
+    .catch(error => sendResponse({ success: false, error: error.message }));
+  return true;
+});
+
+// MAIN world only to read ProseMirror's document description. Its internal
+// pmViewDesc is a read-only compatibility check, never a model mutation API.
+// Browser editing commands feed the editor's normal DOM observer, input hooks,
+// transaction filters and history. No clipboard/paste or document replacement.
+async function simulateProseMirrorInput(token, text, operation) {
+  const element = Array.from(document.querySelectorAll('.ProseMirror'))
+    .find(candidate => candidate.getAttribute('data-paste-typer-prosemirror-target') === token);
+  const unavailable = () => ({ success: false, error: 'Cannot access the selected ProseMirror editor. No text was inserted.' });
+  const description = element?.pmViewDesc;
+  if (!element?.isConnected || !element.isContentEditable || !description?.node ||
+      description.dom !== element || typeof description.posFromDOM !== 'function' ||
+      typeof description.node.eq !== 'function' || typeof description.node.textBetween !== 'function' ||
+      typeof description.node.resolve !== 'function' || typeof description.node.cut !== 'function') return unavailable();
+  const before = description.node;
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !element.contains(selection.anchorNode) || !element.contains(selection.focusNode)) {
+    return { success: false, error: 'The selected editor lost its caret. Click inside it and try again.' };
+  }
+  const from = description.posFromDOM(selection.anchorNode, selection.anchorOffset, 1);
+  const to = description.posFromDOM(selection.focusNode, selection.focusOffset, 1);
+  const start = Math.min(from, to), end = Math.max(from, to);
+  if (start < 0 || end > before.content.size) return unavailable();
+  // ProseMirror's normal-whitespace parser converts tabs to spaces. Refuse
+  // before editing rather than silently changing the user's source text.
+  if (operation === 'type' && text === '\t' && before.resolve(start).parent.type.whitespace !== 'pre') {
+    return { success: false, error: 'This ProseMirror block normalizes tabs to spaces. Use a code block for literal tabs.' };
+  }
+  const existing = before.textBetween(start, end);
+  let deletionStart = start;
+  if (operation === 'backspace' && start === end) {
+    const resolved = before.resolve(start);
+    const preceding = before.textBetween(resolved.start(), start, '', '\ufffc');
+    const previous = preceding && new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+      .segment(preceding).containing(preceding.length - 1).segment;
+    deletionStart = Math.max(0, start - (previous ? previous.length : 2));
+  }
+  element.focus({ preventScroll: true });
+  if (operation === 'clear') {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges(); selection.addRange(range);
+  }
+  const key = operation === 'type' ? text === '\n' ? 'Enter' : text : 'Backspace';
+  const keyCode = key === 'Enter' ? 13 : key === 'Backspace' ? 8
+    : /^[a-z]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0;
+  const keyboard = type => {
+    const charCode = type === 'keypress' ? text.charCodeAt(0) : 0;
+    return new KeyboardEvent(type, {
+      key, code: key === 'Enter' || key === 'Backspace' ? key : '',
+      keyCode: charCode || keyCode, which: charCode || keyCode, charCode,
+      bubbles: true, cancelable: true
+    });
+  };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+  const caret = () => {
+    const desc = element.pmViewDesc, selected = window.getSelection();
+    if (!element.isConnected || !element.isContentEditable || document.activeElement !== element ||
+        !desc?.node || !selected?.rangeCount || !element.contains(selected.anchorNode) || !element.contains(selected.focusNode)) {
+      throw new Error('The selected editor or caret changed. Typing stopped before further input.');
+    }
+    const anchor = desc.posFromDOM(selected.anchorNode, selected.anchorOffset, 1);
+    const head = desc.posFromDOM(selected.focusNode, selected.focusOffset, 1);
+    return { doc: desc.node, from: Math.min(anchor, head), to: Math.max(anchor, head) };
+  };
+  const expected = caret();
+  const handled = () => {
+    const current = caret();
+    if (!before.eq(current.doc)) return true;
+    if (operation === 'clear') return false;
+    if (current.from === expected.from && current.to === expected.to) return false;
+    if (operation === 'type' && existing === text && current.from === start + text.length && current.to === current.from) return true;
+    throw new Error('The editor moved the selected caret. Typing stopped before further input.');
+  };
+  let eventMutated = false;
+  const observer = new MutationObserver(records => { if (records.length) eventMutated = true; });
+  observer.observe(element, { childList: true, characterData: true, subtree: true });
+  const dispatch = async event => {
+    eventMutated = false; observer.takeRecords();
+    const accepted = element.dispatchEvent(event);
+    // Hooks can perform their own browser edit or move focus. Let ProseMirror
+    // observe those effects, then verify ownership before any default edit.
+    await settle();
+    const edited = eventMutated || observer.takeRecords().length > 0;
+    const changed = handled();
+    if (!accepted && !changed) throw new Error('The editor rejected the simulated input.');
+    // A hook's edit may have been rejected and redrawn already. It still owned
+    // this input attempt; do not send the same character a second time.
+    return changed || edited;
+  };
+  let failure, keydownSent = false;
+  try {
+    // Clear uses the explicit DOM selection above. A synthetic Backspace can
+    // make a keymap delete its still-pending old model selection instead.
+    let consumed = false;
+    if (operation !== 'clear') {
+      keydownSent = true;
+      consumed = await dispatch(keyboard('keydown'));
+      // Native composed input has no one-code-unit keypress. For ordinary
+      // characters, preserve PM's handleKeyPress hook (including its own edit).
+      if (!consumed && operation === 'type' && text !== '\n' && text.length === 1) {
+        consumed = await dispatch(keyboard('keypress'));
+      }
+    }
+    if (!consumed) {
+      const inputType = operation === 'type' ? text === '\n' ? 'insertParagraph' : 'insertText'
+        : 'deleteContentBackward';
+      consumed = await dispatch(new InputEvent('beforeinput', {
+        data: operation === 'type' && text !== '\n' ? text : null,
+        inputType, bubbles: true, cancelable: true
+      }));
+    }
+    if (!consumed && !handled()) {
+      if (operation === 'clear') {
+        // Selectionchange may normalize the full-root range while hooks run.
+        // Clear explicitly owns the whole editor, so select it again only after
+        // verifying focus/model and immediately before native deletion.
+        const range = document.createRange(); range.selectNodeContents(element);
+        selection.removeAllRanges(); selection.addRange(range);
+      }
+      const command = operation !== 'type' ? 'delete' : text === '\n' ? 'insertParagraph' : 'insertText';
+      const accepted = document.execCommand(command, false, operation === 'type' ? text : null);
+      await settle();
+      if (!accepted) throw new Error('The editor did not accept browser text input.');
+    }
+  } catch (error) {
+    failure = error.message;
+  } finally {
+    if (keydownSent) { element.dispatchEvent(keyboard('keyup')); await settle(); }
+    observer.disconnect();
+  }
+  if (failure) return { success: false, error: failure };
+  try {
+    const current = caret(), after = current.doc;
+    const emptyBoundary = node => node.isTextblock ? node.content.size === 0
+      : node.childCount === 1 && emptyBoundary(node.firstChild);
+    const samePrefix = (left, right) => left.eq(right) ||
+      left.content.size === 0 && emptyBoundary(right) || right.content.size === 0 && emptyBoundary(left);
+    const sameSuffix = (left, right) => {
+      if (samePrefix(left, right)) return true;
+      // Enter and cross-block replacement can change the surviving boundary
+      // textblock's wrapper. Its content/marks and complete later nodes remain
+      // exact; newly created schema-required empty wrappers are allowed too.
+      if (left.isTextblock && right.isTextblock) return left.content.eq(right.content);
+      if (!left.sameMarkup(right) || left.childCount !== right.childCount || !left.childCount) return false;
+      for (let i = 1; i < left.childCount; i++) if (!left.child(i).eq(right.child(i))) return false;
+      return sameSuffix(left.firstChild, right.firstChild);
+    };
+    if (operation === 'type') {
+      const insertedEnd = current.from;
+      const leafText = node => node.type.name === 'hard_break' ? '\n' : '\ufffc';
+      const lengths = text === '\n' ? [1, 2] : [text.length];
+      const literal = current.to === insertedEnd && lengths.some(length => {
+        const insertedStart = insertedEnd - length;
+        return insertedStart >= 0 && after.textBetween(insertedStart, insertedEnd, '\n', leafText) === text &&
+          samePrefix(before.cut(0, start), after.cut(0, insertedStart)) && sameSuffix(before.cut(end), after.cut(insertedEnd));
+      });
+      if (!literal) {
+        return { success: false, error: 'The editor rejected or transformed the simulated character. Typing stopped.' };
+      }
+    } else if (operation === 'backspace' &&
+        (after.content.size !== before.content.size - (end - deletionStart) ||
+          current.from !== deletionStart || current.to !== deletionStart ||
+          !samePrefix(before.cut(0, deletionStart), after.cut(0, deletionStart)) || !sameSuffix(before.cut(end), after.cut(deletionStart)))) {
+      return { success: false, error: 'The editor rejected or transformed Backspace. Typing stopped.' };
+    } else if (before.eq(after) || operation === 'clear' && after.textBetween(0, after.content.size, '\n', '\ufffc') !== '') {
+      return { success: false, error: 'The editor rejected the simulated deletion. Typing stopped.' };
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action !== 'ptProseMirrorInput') return;
+  if (!sender.tab || !sender.documentId || !/^https?:|^about:/.test(sender.url || '') ||
+      typeof request.token !== 'string' || typeof request.text !== 'string' ||
+      !['type', 'backspace', 'clear'].includes(request.operation)) return;
+  if (request.operation === 'type') {
+    if (!request.text || request.text.length > 128 ||
+        Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(request.text)).length !== 1) return;
+  } else if (request.text !== '') return;
+  chrome.scripting.executeScript({
+    target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
+    world: 'MAIN', func: simulateProseMirrorInput, args: [request.token, request.text, request.operation]
   }).then(results => sendResponse(results[0]?.result ||
     { success: false, error: 'The selected editor is no longer available.' }))
     .catch(error => sendResponse({ success: false, error: error.message }));

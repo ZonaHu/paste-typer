@@ -77,6 +77,40 @@ test('Monaco input rejects extension pages and malformed payloads', () => {
   ]) assert.equal(listeners[0](request, sender, () => {}), undefined);
 });
 
+test('ProseMirror input is confined to its sender document and permits one grapheme', async () => {
+  const { chrome, listeners } = setup();
+  const sender = { tab: { id: 1 }, documentId: 'editor', url: 'https://editor.test/' };
+  let injected;
+  chrome.scripting.executeScript = async options => { injected = options; return [{ result: { success: true } }]; };
+  for (const text of ['中', '👨‍👩‍👦', 'e\u0301', '\n']) {
+    const result = await new Promise(resolve => {
+      assert.equal(listeners[1]({ action: 'ptProseMirrorInput', token: 'chosen', text, operation: 'type', tabId: 999 }, sender, resolve), true);
+    });
+    assert.equal(result.success, true);
+    assert.equal(injected.world, 'MAIN');
+    assert.equal(injected.target.tabId, 1);
+    assert.deepEqual([...injected.target.documentIds], ['editor']);
+    assert.deepEqual([...injected.args], ['chosen', text, 'type']);
+  }
+});
+
+test('ProseMirror input rejects external senders, bulk text and malformed operations', () => {
+  const { chrome, listeners } = setup();
+  chrome.scripting.executeScript = () => { throw new Error('must not inject'); };
+  const sender = { tab: { id: 1 }, documentId: 'editor', url: 'https://editor.test/' };
+  const request = { action: 'ptProseMirrorInput', token: 'chosen', text: 'X', operation: 'type' };
+  for (const [payload, source] of [
+    [request, { ...sender, url: 'chrome-extension://id/popup.html' }],
+    [request, { ...sender, documentId: undefined }],
+    [request, { ...sender, tab: undefined }],
+    [{ ...request, text: 'whole document' }, sender],
+    [{ ...request, text: '' }, sender],
+    [{ ...request, operation: 'paste' }, sender],
+    [{ ...request, operation: 'clear' }, sender],
+    [{ ...request, operation: 'backspace', text: '\n' }, sender]
+  ]) assert.equal(listeners[1](payload, source, () => {}), undefined);
+});
+
 test('start targets only the most recently selected frame and its document', async () => {
   const { router, sent } = setup();
   await router.route(1, { action: 'startTyping', text: 'abc' });
