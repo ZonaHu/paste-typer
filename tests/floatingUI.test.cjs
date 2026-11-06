@@ -25,7 +25,7 @@ function setup({ savedSettings, delaySettings = false } = {}) {
   const root = { getElementById(id) {
     if (!elements.has(id)) elements.set(id, {
       value: id === 'textInput' ? 'selected text' : id === 'speedSlider' ? '50' : '5',
-      textContent: '', classList: { remove() {} }, listeners: new Map(),
+      style: {}, textContent: '', classList: { remove() {} }, listeners: new Map(),
       addEventListener(type, fn) { this.listeners.set(type, fn); }
     });
     return elements.get(id);
@@ -104,7 +104,7 @@ test('forged page messages cannot route typing or read/write extension settings'
 
 test('untrusted clicks/input and missing events cannot invoke privileged handlers', async () => {
   const state = setup();
-  for (const id of ['startTyping', 'stopTyping', 'loadClipboard', 'closeBtn', 'deleteSavedText']) await state.emit(id, 'click', false);
+  for (const id of ['startTyping', 'stopTyping', 'pauseTyping', 'loadClipboard', 'closeBtn', 'deleteSavedText']) await state.emit(id, 'click', false);
   for (const id of ['textInput', 'speedSlider', 'typoChanceSlider']) await state.emit(id, 'input', false);
   await state.emit('rememberText', 'change', false);
   await state.controller.startTyping(); await state.controller.stopTyping();
@@ -138,10 +138,10 @@ test('floating status reports an asynchronous typing failure and keeps it visibl
   const state = setup();
   await state.emit('startTyping', 'click', true);
   assert.equal(state.activeIntervals(), 1);
-  state.setProgress({ position: 0, total: 3, isTyping: false, isPaused: false,
+  state.setProgress({ sessionId: 1, state: 'error', position: 0, total: 3, isTyping: false, isPaused: false,
     error: 'The page changed or rejected the typed text.' });
   await state.tick();
-  assert.equal(state.activeIntervals(), 0);
+  assert.equal(state.activeIntervals(), 1);
   assert.equal(state.root.getElementById('status').textContent,
     'The page changed or rejected the typed text.');
   assert.match(state.root.getElementById('status').className, /error/);
@@ -150,7 +150,7 @@ test('floating status reports an asynchronous typing failure and keeps it visibl
 test('floating status does not claim verified completion for a canvas editor', async () => {
   const state = setup();
   await state.emit('startTyping', 'click', true);
-  state.setProgress({ position: 2, total: 2, isTyping: false, isPaused: false,
+  state.setProgress({ sessionId: 1, state: 'completed', position: 2, total: 2, isTyping: false, isPaused: false,
     error: null, deliveryVerified: false });
   await state.tick();
   assert.equal(state.root.getElementById('status').textContent,

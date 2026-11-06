@@ -21,6 +21,9 @@ class FloatingUIController {
     this.typoChanceValue = root.getElementById('typoChanceValue');
     this.startButton = root.getElementById('startTyping');
     this.stopButton = root.getElementById('stopTyping');
+    this.pauseButton = root.getElementById('pauseTyping');
+    this.progressInterval = null;
+    this.sessionState = 'idle';
     this.loadClipboardButton = root.getElementById('loadClipboard');
     this.closeBtn = root.getElementById('closeBtn');
     this.header = root.getElementById('header');
@@ -81,6 +84,8 @@ class FloatingUIController {
     this.startButton.addEventListener('click', event => {
       this.startTyping(event);
     });
+
+    this.pauseButton.addEventListener('click', event => this.togglePause(event));
 
     this.stopButton.addEventListener('click', event => {
       this.stopTyping(event);
@@ -167,34 +172,52 @@ class FloatingUIController {
     this.stopProgressTracking();
   }
 
-  startProgressTracking() {
-    this.stopProgressTracking();
-    const interval = setInterval(async () => {
-      const response = await this.sendCommand({ action: 'getTypingProgress' });
-      if (this.progressInterval !== interval) return;
-      if (!response || response.success === false) {
-        this.stopProgressTracking();
-        this.showStatus(response?.error || 'Lost connection to typing session. Refresh this page.', 'error');
-      } else if (!response.isTyping) {
-        this.stopProgressTracking();
-        const unverified = response.deliveryVerified === false;
-        this.showStatus(response.error || (unverified
-          ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete'),
-        response.error ? 'error' : unverified ? 'info' : 'success');
-      } else if (response.isPaused) {
-        this.showStatus('Typing paused', 'info');
-      } else {
-        this.showStatus(`Typing ${response.position} / ${response.total}`, 'info');
-      }
-    }, 500);
-    this.progressInterval = interval;
+  async togglePause(event) {
+    if (event?.isTrusted !== true) return;
+    const response = await this.sendCommand({ action: this.sessionState === 'paused' ? 'resumeTyping' : 'pauseTyping' });
+    if (!response?.success) this.showStatus(response?.error || 'Could not change pause state', 'error');
+    await this.syncTypingState();
+  }
+
+  renderTypingState(progress) {
+    const state = progress.state || (progress.isTyping ? progress.isPaused ? 'paused' : 'running' : 'idle');
+    const changed = state !== this.sessionState || progress.sessionId !== this.lastSessionId;
+    this.sessionState = state;
+    this.lastSessionId = progress.sessionId;
+    const active = state === 'running' || state === 'paused';
+    const clearing = state === 'clearing';
+    this.startButton.disabled = active || clearing || state === 'stopping';
+    this.stopButton.disabled = !(active || clearing);
+    this.pauseButton.disabled = !active;
+    this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
+    if (!changed && state !== 'running') return;
+    if (state === 'error') this.showStatus(progress.error || 'Typing failed', 'error');
+    else if (state === 'stopped') this.showStatus('Stopped', 'info');
+    else if (state === 'stopping') this.showStatus('Stopping...', 'info');
+    else if (state === 'clearing') this.showStatus('Clearing selected field...', 'info');
+    else if (state === 'completed') this.showStatus(progress.deliveryVerified === false
+      ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete',
+    progress.deliveryVerified === false ? 'info' : 'success');
+    else if (state === 'paused') this.showStatus('Typing paused', 'info');
+    else if (state === 'running') this.showStatus(`Typing ${progress.position} / ${progress.total}`, 'info');
   }
 
   async syncTypingState() {
+    if (this.container.style.display === 'none') return;
     const response = await this.sendCommand({ action: 'getTypingProgress' });
-    if (this.container.style.display === 'none' || this.progressInterval) return;
-    if (response?.isTyping) this.startProgressTracking();
-    else if (response?.error) this.showStatus(response.error, 'error');
+    if (this.container.style.display === 'none') return;
+    if (!response || response.success === false) {
+      this.stopProgressTracking();
+      this.showStatus(response?.error || 'Lost connection to typing session. Refresh this page.', 'error');
+      return;
+    }
+    this.renderTypingState(response);
+    if (!this.progressInterval) this.startProgressTracking();
+  }
+
+  startProgressTracking() {
+    if (this.progressInterval) return;
+    this.progressInterval = setInterval(() => this.syncTypingState(), 250);
   }
 
   stopProgressTracking() {

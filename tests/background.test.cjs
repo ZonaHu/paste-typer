@@ -9,6 +9,7 @@ test('context-menu typing uses the saved typo percentage, including zero', async
   let savedRate;
   const routed = [];
   const chrome = {
+    commands: { onCommand: { addListener() {} } },
     contextMenus: {
       onClicked: { addListener(fn) { onClick = fn; } },
       removeAll(callback) { callback(); },

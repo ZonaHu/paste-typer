@@ -11,6 +11,22 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
 class BackgroundService {
   constructor() {
     this.setupContextMenu();
+    chrome.commands.onCommand.addListener((command, tab) => this.handleCommand(command, tab));
+  }
+
+  async handleCommand(command, tab) {
+    if (command !== 'stop-typing') return;
+    try {
+      const currentTab = tab || (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+      if (!Number.isInteger(currentTab?.id)) return;
+      // The router follows the running (including paused) frame even if the
+      // user has since selected a different input or closed both control UIs.
+      await frameRouter.route(currentTab.id, { action: 'stopTyping' });
+    } catch (error) {
+      // Restricted/closed tabs and stale receivers must not reject the event
+      // callback. The next UI invocation already provides recovery guidance.
+      debug.warn('Could not stop typing from shortcut:', error.message);
+    }
   }
 
   setupContextMenu() {

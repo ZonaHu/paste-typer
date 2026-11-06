@@ -70,6 +70,21 @@ const server = http.createServer((req,res)=>{
   });
   await worker.evaluate(async tabId=>{await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>{if(typeof pasteTyper!=='undefined')pasteTyper.pauseChance=0;}});},tabId);
   const read=()=>editor.evaluate(()=>editors.map(e=>e.getValue().replace(/\r\n/g,'\n')));
+  const waitForEditorText=async(index,text)=>{
+    try {
+      await editor.waitForFunction(({index,text})=>
+        editors[index].getValue().replace(/\r\n/g,'\n')===text,{index,text},{timeout:60000});
+    } catch(error) {
+      const diagnostic=await Promise.allSettled([
+        read(), route({action:'getTypingProgress'}), page.evaluate(()=>{
+          const root=document.getElementById('paste-typer-floating-ui')?.shadowRoot;
+          return {text:root?.getElementById('textInput')?.value,status:root?.getElementById('status')?.textContent};
+        })
+      ]);
+      console.error('Monaco fixture text mismatch', {expected:text,diagnostic});
+      throw error;
+    }
+  };
   const waitDone=async()=>{for(let i=0;i<1500;i++){const r=await route({action:'getTypingProgress'});if(!r.isTyping){assert.equal(r.error,null);return;}await new Promise(r=>setTimeout(r,30));}throw Error('typing timed out');};
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});await waitDone();
   assert.deepEqual(await read(),['abcXYZdef','SECOND']);assert.equal(await page.locator('#outside').inputValue(),'OUTSIDE');console.log('PASS cross-origin target + middle insertion + unrelated editor untouched');
@@ -80,16 +95,44 @@ const server = http.createServer((req,res)=>{
   const commandCount=()=>worker.evaluate(()=>testRoutedCommands.filter(action=>action!=='getTypingProgress').length);
   const startCount=()=>worker.evaluate(()=>testRoutedCommands.filter(action=>action==='startTyping').length);
   const forgeMessages=()=>page.evaluate(()=>{
-    for(const action of ['startTyping','stopTyping','loadSettings','saveSettings','floatingUIClosed']){
+    for(const action of ['startTyping','stopTyping','pauseTyping','resumeTyping','loadSettings','saveSettings','floatingUIClosed']){
       window.postMessage({source:'paste-typer-floating-ui',direction:'to-content',requestId:'forged',
         action,payload:{text:'FORGED',speed:10,typoChance:0,targetElement:true,settings:{text:'FORGED'}}},'*');
     }
   });
-  const assertNoPageCommands=async baseline=>{
-    // Observe asynchronous runtime delivery too, rather than only checking DOM.
-    for(let i=0;i<10;i++){
-      await new Promise(resolve=>setTimeout(resolve,30));assert.equal(await commandCount(),baseline);
-    }
+  const setFloatingPolling=enabled=>worker.evaluate(({tabId,enabled})=>chrome.scripting.executeScript({
+    target:{tabId,frameIds:[0]},world:'ISOLATED',func:async enabled=>{
+      if(enabled){
+        const saved=globalThis.fixtureFloatingPolling;
+        if(!saved)return;
+        saved.controller.syncTypingState=saved.sync;
+        saved.controller.startProgressTracking=saved.start;
+        delete globalThis.fixtureFloatingPolling;
+        await saved.controller.syncTypingState();
+        return;
+      }
+      const controller=pasteTyper.floatingUIController;
+      if(!controller)return;
+      const saved={controller,sync:controller.syncTypingState,start:controller.startProgressTracking};
+      globalThis.fixtureFloatingPolling=saved;
+      controller.syncTypingState=async()=>{};
+      controller.startProgressTracking=()=>{};
+      controller.stopProgressTracking();
+      // Complete a final legitimate round trip before counting attack traffic.
+      // Earlier poll continuations cannot restart routing while methods pause.
+      await saved.sync.call(controller);
+    },args:[enabled]
+  }),{tabId,enabled});
+  const assertNoPageCommands=async attack=>{
+    await setFloatingPolling(false);
+    try{
+      const baseline=await commandCount();
+      await attack();
+      // Observe asynchronous runtime delivery too, rather than only checking DOM.
+      for(let i=0;i<10;i++){
+        await new Promise(resolve=>setTimeout(resolve,30));assert.equal(await commandCount(),baseline);
+      }
+    }finally{await setFloatingPolling(true);}
   };
   const waitForSettings=async expected=>{
     for(let i=0;i<100;i++){
@@ -106,7 +149,7 @@ const server = http.createServer((req,res)=>{
       if(event.data?.source==='paste-typer-floating-ui' && event.data.direction==='to-floating-ui')forgedReplies.push(event.data);
     });
   });
-  let baseline=await commandCount();await forgeMessages();await assertNoPageCommands(baseline);
+  await assertNoPageCommands(forgeMessages);
   assert.deepEqual(await read(),['abcdef','SECOND']);
   console.log('PASS forged page messages before opening floating UI cannot reach another origin');
   await route({action:'toggleFloatingUI'});
@@ -119,20 +162,21 @@ const server = http.createServer((req,res)=>{
   },tabId),true);
   assert.equal(await page.evaluate(()=>typeof FloatingUIController),'undefined');
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('script').count(),0);
-  baseline=await commandCount();
-  await page.evaluate(()=>{
-    const root=document.getElementById('paste-typer-floating-ui').shadowRoot;
-    for(const id of ['startTyping','stopTyping','loadClipboard','closeBtn']){
-      root.getElementById(id).click();
-      root.getElementById(id).dispatchEvent(new MouseEvent('click',{bubbles:true,composed:true}));
-    }
-    root.getElementById('startTyping').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
-    root.getElementById('textInput').value='FORGED';
-    for(const id of ['textInput','speedSlider','typoChanceSlider']){
-      root.getElementById(id).dispatchEvent(new InputEvent('input',{bubbles:true,composed:true}));
-    }
+  await assertNoPageCommands(async()=>{
+    await page.evaluate(()=>{
+      const root=document.getElementById('paste-typer-floating-ui').shadowRoot;
+      for(const id of ['startTyping','stopTyping','pauseTyping','loadClipboard','closeBtn']){
+        root.getElementById(id).click();
+        root.getElementById(id).dispatchEvent(new MouseEvent('click',{bubbles:true,composed:true}));
+      }
+      root.getElementById('startTyping').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+      root.getElementById('textInput').value='FORGED';
+      for(const id of ['textInput','speedSlider','typoChanceSlider']){
+        root.getElementById(id).dispatchEvent(new InputEvent('input',{bubbles:true,composed:true}));
+      }
+    });
+    await forgeMessages();
   });
-  await forgeMessages();await assertNoPageCommands(baseline);
   assert.deepEqual(await read(),['abcdef','SECOND']);
   assert.deepEqual(await worker.evaluate(()=>chrome.storage.local.get('pasteTyperSettings')),settingsBefore);
   assert.deepEqual(await page.evaluate(()=>forgedReplies),[]);
@@ -149,9 +193,9 @@ const server = http.createServer((req,res)=>{
   assert.equal(typeof position.floatingUIPosition.y,'number');
   console.log('PASS trusted drag persists floating position');
   await route({action:'toggleFloatingUI'});await route({action:'toggleFloatingUI'});
-  baseline=await startCount();
+  let baseline=await startCount();
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').click();
-  await page.locator('#paste-typer-floating-ui').locator('#status').filter({hasText:'Typing started!'}).waitFor();await waitDone();
+  await waitForEditorText(1,'SselectionND');await waitDone();
   assert.equal(await startCount()-baseline,1);
   assert.deepEqual(await read(),['abcdef','SselectionND']);console.log('PASS floating UI retains selected editor and selection');
   await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));
@@ -159,19 +203,24 @@ const server = http.createServer((req,res)=>{
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('K');
   await page.locator('#paste-typer-floating-ui').locator('#speedSlider').fill('10');
   await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').fill('0');
-  await page.locator('#paste-typer-floating-ui').locator('#startTyping').press('Enter');
-  await page.locator('#paste-typer-floating-ui').locator('#status').filter({hasText:'Typing started!'}).waitFor();await waitDone();
+  await page.locator('#paste-typer-floating-ui').locator('#startTyping:enabled').press('Enter');
+  await waitForEditorText(1,'SKselectionND');await waitDone();
   assert.equal((await read())[1],'SKselectionND');console.log('PASS trusted keyboard activation starts typing');
   await editor.locator('#two textarea.inputarea').focus();
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('R'.repeat(200));
   await page.locator('#paste-typer-floating-ui').locator('#speedSlider').fill('25');
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').click();
-  await page.locator('#paste-typer-floating-ui').locator('#status').filter({hasText:'Typing started!'}).waitFor();
-  baseline=await commandCount();
-  await forgeMessages();
-  await page.evaluate(()=>document.getElementById('paste-typer-floating-ui').shadowRoot.getElementById('stopTyping').click());
-  await assertNoPageCommands(baseline);
+  await editor.waitForFunction(()=>editors[1].getValue().includes('R'));
+  await assertNoPageCommands(async()=>{
+    await forgeMessages();
+    await page.evaluate(()=>{
+      const root=document.getElementById('paste-typer-floating-ui').shadowRoot;
+      root.getElementById('stopTyping').click();
+      root.getElementById('pauseTyping').click();
+    });
+  });
   assert.equal((await route({action:'getTypingProgress'})).isTyping,true);
+  assert.equal((await route({action:'getTypingProgress'})).isPaused,false);
   await page.locator('#paste-typer-floating-ui').locator('#stopTyping').click();
   await page.locator('#paste-typer-floating-ui').locator('#status').filter({hasText:'Stopped'}).waitFor();
   assert.equal((await route({action:'getTypingProgress'})).isTyping,false);
@@ -233,11 +282,11 @@ const server = http.createServer((req,res)=>{
   await popup.evaluate(id=>{chrome.tabs.query=async()=>[ {id,url:'http://127.0.0.1/'} ];},tabId);
   await popup.locator('#textInput').fill('popup');await popup.locator('#speedSlider').fill('10');
   await popup.locator('#typoChanceSlider').fill('0');await popup.locator('#startTyping').click();
-  await popup.locator('#status').filter({hasText:'Typing started!'}).waitFor({timeout:3000});await waitDone();
+  await waitForEditorText(0,'abpopupcdef');await waitDone();
   assert.equal((await read())[0],'abpopupcdef');console.log('PASS popup after losing page focus, saved caret');
   const indented='    int n = 1;\r\n    n++;\r\n';
   await popup.locator('#textInput').fill(indented);await popup.locator('#startTyping').click();
-  await popup.locator('#status').filter({hasText:'Typing started!'}).waitFor({timeout:3000});await waitDone();
+  await waitForEditorText(0,'abpopup'+indented.replace(/\r\n/g,'\n')+'cdef');await waitDone();
   assert.equal((await read())[0],'abpopup'+indented.replace(/\r\n/g,'\n')+'cdef');console.log('PASS popup preserves leading indentation and trailing newlines');
   await editor.evaluate(()=>{
     editors[0].setValue('');monaco.editor.setModelLanguage(editors[0].getModel(),'cpp');
@@ -254,7 +303,7 @@ const server = http.createServer((req,res)=>{
   });
   const code='int main() {\n    // Вывод текста на экран\n    printf("Привет! Это простая программа на C.\\n");\n\n    int num1, num2, sum;\n\n    // Запрос ввода от пользователя\n    printf("Введите первое целое число: ");\n    scanf("%d", &num1);\n\n    printf("Введите второе целое число: ");\n    scanf("%d", &num2);\n\n    // Математическая операция\n    sum = num1 + num2;\n\n    // Вывод результата\n    printf("Сумма чисел %d и %d равна: %d\\n", num1, num2, sum);\n\n    return 0;\n}\n';
   await popup.locator('#textInput').fill(code);await popup.locator('#startTyping').click();
-  await popup.locator('#status').filter({hasText:'Typing started!'}).waitFor({timeout:3000});await waitDone();
+  await waitForEditorText(0,code);await waitDone();
   assert.equal((await read())[0],code);console.log('PASS exact multiline C sample, auto-indent and auto-closing enabled');
   const inputProof=await editor.evaluate(()=>({pasteCount,inputEvents,before:inputOptionsBefore,
     after:['autoIndent','autoClosingBrackets','autoClosingQuotes','autoClosingOvertype','autoSurround','formatOnType','acceptSuggestionOnEnter'].map(name=>editors[0].getOption(monaco.editor.EditorOption[name]))}));
