@@ -94,6 +94,19 @@ script without its floating controller. This verifies dependency repair without
 class redeclarations. The harness also checks settings persistence after panel
 recreation and removes partial markup when controller initialization fails.
 
+For existing-user upgrade and receiver-recovery changes, run the isolated reload
+harness with the same test-only Playwright setup:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/upgradeRecovery.integration.cjs
+```
+
+It needs full Git history for historical commit `64198da`. It checks an unpacked
+1.1.1 → 1.1.2 reload, preserved storage, refreshed/new-page controls and Stop.
+This is not a Web Store upgrade or permission-disabled installation test. See
+[the recorded evidence and live acceptance matrix](docs/upgrade-validation.md)
+before claiming existing-user recovery.
+
 ## Code style
 
 Plain JavaScript, no build tooling, no dependencies. Match the surrounding style.
