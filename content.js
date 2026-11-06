@@ -11,6 +11,7 @@ class PasteTyper {
     this.isTyping = false;
     this.isPaused = false;
     this.currentText = '';
+    this.currentGraphemes = [];
     this.currentPosition = 0;
     this.targetElement = null;
     this.currentAdapter = null; // 当前使用的适配器
@@ -99,7 +100,7 @@ class PasteTyper {
       } else if (request.action === 'getTypingProgress') {
         sendResponse({
           position: this.currentPosition,
-          total: this.currentText.length,
+          total: this.currentGraphemes.length,
           isTyping: this.isTyping,
           isPaused: this.isPaused,
           error: this.lastError
@@ -404,6 +405,7 @@ class PasteTyper {
         this.lastError = null;
         this.isPaused = false;
         this.currentText = text.replace(/\r\n?/g, '\n');
+        this.currentGraphemes = PTGraphemes.split(this.currentText);
         this.currentPosition = 0;
         this.targetElement = targetElement;
 
@@ -434,7 +436,7 @@ class PasteTyper {
   async continueTyping() {
     const CHUNK_SIZE = 50; // 长文本分块输入，避免页面卡死
     
-    while (this.currentPosition < this.currentText.length && this.isTyping) {
+    while (this.currentPosition < this.currentGraphemes.length && this.isTyping) {
       // Check if paused
       if (this.isPaused) {
         await this.sleep(100);
@@ -442,13 +444,13 @@ class PasteTyper {
       }
       
       // 对于长文本，分块输入以避免页面卡死
-      const remaining = this.currentText.length - this.currentPosition;
+      const remaining = this.currentGraphemes.length - this.currentPosition;
       const chunkSize = remaining > CHUNK_SIZE ? CHUNK_SIZE : remaining;
       
-      for (let i = 0; i < chunkSize && this.currentPosition < this.currentText.length && this.isTyping; i++) {
+      for (let i = 0; i < chunkSize && this.currentPosition < this.currentGraphemes.length && this.isTyping; i++) {
         if (this.isPaused) break;
         
-        const char = this.currentText[this.currentPosition];
+        const char = this.currentGraphemes[this.currentPosition];
         
         // Check for typo (before typing the character)
         if (this.typoChance > 0 && Math.random() < this.typoChance && this.shouldMakeTypo(char)) {
@@ -476,12 +478,12 @@ class PasteTyper {
       }
       
       // 每处理一个 chunk 后稍作休息，避免页面卡死
-      if (this.currentPosition < this.currentText.length) {
+      if (this.currentPosition < this.currentGraphemes.length) {
         await this.sleep(10);
       }
     }
     
-    if (this.currentPosition >= this.currentText.length) {
+    if (this.currentPosition >= this.currentGraphemes.length) {
       this.isTyping = false;
       this.isPaused = false;
     }
@@ -493,11 +495,11 @@ class PasteTyper {
       return false;
     }
     // Don't make typos if we're near the end
-    if (this.currentPosition > this.currentText.length - 5) {
+    if (this.currentPosition > this.currentGraphemes.length - 5) {
       return false;
     }
     // Only make typos on letters and numbers
-    return /[a-zA-Z0-9]/.test(char);
+    return /^[a-zA-Z0-9]$/.test(char);
   }
 
   async makeTypoAndCorrect(correctChar) {
@@ -668,6 +670,7 @@ class PasteTyper {
     this.stopTyping();
     this.currentPosition = 0;
     this.currentText = '';
+    this.currentGraphemes = [];
     
     // Try multiple strategies to find the element to clear
     let elementToClear = null;
@@ -871,54 +874,21 @@ class PasteTyper {
         break;
       }
       
-      // Simulate Backspace keydown
-      const backspaceDown = new KeyboardEvent('keydown', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceDown);
-      
-      // Actually remove one character
+      // Clear falls back to deleting whole graphemes from the end. Reuse the
+      // ordinary adapter so its UTF-16 and cross-node boundaries stay consistent.
       if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-        const currentValue = element.value;
-        if (currentValue.length > 0) {
-          this._setNativeValue(element, currentValue.slice(0, -1));
+        if (typeof element.selectionStart === 'number') {
           element.setSelectionRange(element.value.length, element.value.length);
         }
       } else if (element.contentEditable === 'true' || element.isContentEditable) {
-        const currentText = element.textContent || '';
-        if (currentText.length > 0) {
-          element.textContent = currentText.slice(0, -1);
-          // Set cursor to end
-          const selection = window.getSelection();
-          const range = document.createRange();
-          if (element.childNodes.length > 0) {
-            range.setStartAfter(element.lastChild);
-          } else {
-            range.setStart(element, 0);
-          }
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
       }
-      
-      // Dispatch input event
-      const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-      element.dispatchEvent(inputEvent);
-      
-      // Simulate Backspace keyup
-      const backspaceUp = new KeyboardEvent('keyup', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceUp);
+      this.requireInput(await new StandardInputAdapter().simulateBackspace(element));
       
       // Small delay between backspaces (faster than typing)
       await this.sleep(10);

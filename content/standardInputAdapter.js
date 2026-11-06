@@ -115,11 +115,13 @@ class StandardInputAdapter extends InputAdapter {
 
     // 实际插入字符
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
       const value = element.value;
+      // Some text-like input types (notably email) expose no selection API.
+      const hasSelection = typeof element.selectionStart === 'number';
+      const start = hasSelection ? element.selectionStart : value.length;
+      const end = hasSelection ? element.selectionEnd : value.length;
       this._setNativeValue(element, value.substring(0, start) + char + value.substring(end));
-      element.selectionStart = element.selectionEnd = start + 1;
+      if (hasSelection) element.setSelectionRange(start + char.length, start + char.length);
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
       
@@ -164,16 +166,12 @@ class StandardInputAdapter extends InputAdapter {
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const currentValue = element.value;
       if (currentValue.length > 0) {
-        const start = element.selectionStart;
-        const end = element.selectionEnd;
-        
-        if (start === end && start > 0) {
-          this._setNativeValue(element, currentValue.substring(0, start - 1) + currentValue.substring(start));
-          element.selectionStart = element.selectionEnd = start - 1;
-        } else if (start !== end) {
-          this._setNativeValue(element, currentValue.substring(0, start) + currentValue.substring(end));
-          element.selectionStart = element.selectionEnd = start;
-        }
+        const hasSelection = typeof element.selectionStart === 'number';
+        const start = hasSelection ? element.selectionStart : currentValue.length;
+        const end = hasSelection ? element.selectionEnd : currentValue.length;
+        const [from, to] = PTGraphemes.deletionRange(currentValue, start, end);
+        this._setNativeValue(element, currentValue.substring(0, from) + currentValue.substring(to));
+        if (hasSelection) element.setSelectionRange(from, from);
       }
       
       const backspaceDown = new KeyboardEvent('keydown', {
@@ -211,12 +209,21 @@ class StandardInputAdapter extends InputAdapter {
       if (selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
         
-        if (!range.collapsed) {
-          range.deleteContents();
-        } else if (range.startOffset > 0) {
-          range.setStart(range.startContainer, range.startOffset - 1);
-          range.deleteContents();
+        if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) {
+          return { success: false, error: 'The selected range is outside the input.' };
         }
+        const before = document.createRange();
+        before.selectNodeContents(element);
+        before.setEnd(range.startContainer, range.startOffset);
+        const start = before.toString().length;
+        before.setEnd(range.endContainer, range.endOffset);
+        const end = before.toString().length;
+        const [from, to] = PTGraphemes.deletionRange(element.textContent, start, end);
+        const first = this._textPoint(element, from);
+        const last = this._textPoint(element, to);
+        range.setStart(first.node, first.offset);
+        range.setEnd(last.node, last.offset);
+        range.deleteContents();
         
         range.collapse(true);
         selection.removeAllRanges();
@@ -253,6 +260,18 @@ class StandardInputAdapter extends InputAdapter {
     }
     
     return { success: false, error: '不支持的元素类型' };
+  }
+
+  // A grapheme may span adjacent text/formatting nodes. Flatten for segmentation,
+  // then map its UTF-16 boundaries back to DOM points without rewriting markup.
+  _textPoint(element, offset) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (offset <= node.data.length) return { node, offset };
+      offset -= node.data.length;
+    }
+    return { node: element, offset: element.childNodes.length };
   }
 
   /**
@@ -325,13 +344,13 @@ class StandardInputAdapter extends InputAdapter {
     if (char === '\t') return { code: 'Tab', keyCode: 9, charCode: 9 };
 
     // 字母
-    if (/[a-zA-Z]/.test(char)) {
+    if (/^[a-zA-Z]$/.test(char)) {
       const upper = char.toUpperCase();
       return { code: `Key${upper}`, keyCode: upper.charCodeAt(0), charCode };
     }
 
     // 数字
-    if (/[0-9]/.test(char)) {
+    if (/^[0-9]$/.test(char)) {
       return { code: `Digit${char}`, keyCode: char.charCodeAt(0), charCode };
     }
 
