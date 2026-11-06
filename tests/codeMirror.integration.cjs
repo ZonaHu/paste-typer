@@ -146,6 +146,7 @@ const server = http.createServer((req, res) => {
         await editor.locator(selector).evaluate(element => {
           const range = document.createRange(); range.selectNodeContents(element); range.collapse(true);
           const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); element.focus();
+          document.dispatchEvent(new Event('selectionchange')); // Capture the programmatic test caret before Start.
         });
       } else await editor.locator(selector).press('Home');
       assert.equal(await isolated('adapterName'), 'StandardInputAdapter', selector + ' ' + JSON.stringify(
