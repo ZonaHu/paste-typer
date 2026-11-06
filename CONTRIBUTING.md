@@ -31,6 +31,11 @@ Look at `standardInputAdapter.js` for the simple case and `googleDocsAdapter.js`
 
 Open an issue with the URL (or a description if it's behind a login) and what happened: nothing typed, partial text, wrong order, page rejected the input. That's enough to start.
 
+For a reproducible report, use the site issue template and
+[compatibility reporting guide](docs/compatibility-reporting.md). Include harmless
+expected/actual text, extension/Chrome versions, invocation and tab state, and
+embedded-site access. Keep private document IDs and clipboard data out of issues.
+
 ## Pull requests
 
 Keep them focused. One fix or one adapter per PR. Describe what you tested it against.
