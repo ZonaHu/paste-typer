@@ -11,6 +11,7 @@ function setup(saved = {}) {
     runtime: { getURL: p => `chrome-extension://test/${p}`, onInstalled: { addListener() {} },
       onMessage: { addListener(fn) { listeners.push(fn); } } },
     contextMenus: { onClicked: { addListener() {} } },
+    commands: { onCommand: { addListener() {} } },
     storage: { local: {
       async get() { await new Promise(resolve => setImmediate(resolve)); return structuredClone(storage); },
       async set(values) { Object.assign(storage, structuredClone(values)); }
