@@ -1,9 +1,12 @@
 // All tab messages are addressed to one frame; broadcasting would start typing
 // in unrelated inputs and allow multiple frames to race when answering.
 const PT_CONTENT_FILES = [
+  'content/typoRate.js',
+  'content/graphemes.js',
   'content/inputAdapter.js', 'content/targetTracker.js',
   'content/googleDocsAdapter.js', 'content/standardInputAdapter.js',
-  'content/monacoAdapter.js', 'content/adapterManager.js', 'floating-ui.js', 'content.js'
+  'content/splitCodeInputAdapter.js',
+  'content/monacoAdapter.js', 'content/codeMirrorAdapter.js', 'content/adapterManager.js', 'floating-ui.js', 'content.js'
 ];
 
 class FrameRouter {
@@ -23,6 +26,11 @@ class FrameRouter {
       target: { tabId, allFrames: true }, world: 'ISOLATED',
       func: () => ({ url: location.href,
         embeddedUrls: Array.from(document.querySelectorAll('iframe[src]'), iframe => iframe.src) })
+    }).catch(error => {
+      if (/extensions gallery cannot be scripted/i.test(error.message)) {
+        throw new Error('Chrome does not allow Paste Typer to run on the Chrome Web Store. Open a regular website and try again.');
+      }
+      throw error;
     });
     return (results || []).filter(({ result }) => result && typeof result.url === 'string')
       .map(({ frameId, documentId, result }) => ({
@@ -44,6 +52,7 @@ class FrameRouter {
             try {
               const hasTyper = typeof pasteTyper !== 'undefined';
               return { hasTyper, hasFloating: typeof FloatingUIController !== 'undefined',
+                hasTypoRate: typeof PTTypoRate !== 'undefined',
                 legacyBridge: hasTyper && typeof pasteTyper.setupFloatingUIBridge === 'function' };
             } catch {
               // A failed top-level const initializer leaves an uninitialized
@@ -67,9 +76,12 @@ class FrameRouter {
         error.code = 'PT_REFRESH_REQUIRED';
         throw error;
       }
-      if (!state.hasTyper || !state.hasFloating) {
-        const files = state.hasTyper ? ['floating-ui.js']
-          : PT_CONTENT_FILES.filter(file => file !== 'floating-ui.js' || !state.hasFloating);
+      if (!state.hasTyper || !state.hasFloating || !state.hasTypoRate) {
+        const files = PT_CONTENT_FILES.filter(file => {
+          if (file === 'content/typoRate.js') return !state.hasTypoRate;
+          if (file === 'floating-ui.js') return !state.hasFloating;
+          return !state.hasTyper;
+        });
         await chrome.scripting.executeScript({
           target: { tabId, frameIds: [frameId] }, world: 'ISOLATED', files
         });
@@ -171,7 +183,7 @@ const frameRouter = new FrameRouter();
 // Runs in the selected frame's MAIN world: content scripts cannot access the
 // page's Monaco instances. Never search other frames or fall back to another
 // editor when the selected input disappears.
-function simulateMonacoInput(token, text) {
+async function simulateMonacoInput(token, text) {
   const element = Array.from(document.querySelectorAll('textarea.inputarea'))
     .find(candidate => candidate.getAttribute('data-paste-typer-target') === token);
   const root = element?.closest('.monaco-editor');
@@ -186,6 +198,12 @@ function simulateMonacoInput(token, text) {
     return { success: false, error: 'The selected Monaco editor is not editable.' };
   }
   const option = name => editor.getOption(api.editor.EditorOption[name]);
+  const selection = editor.getSelection();
+  const before = model.getValue();
+  const start = model.getOffsetAt(selection.getStartPosition());
+  const end = model.getOffsetAt(selection.getEndPosition());
+  const inserted = text.replace(/\r\n|\r|\n/g, model.getEOL());
+  const expected = before.slice(0, start) + inserted + before.slice(end);
   const saved = {
     autoIndent: ['none', 'keep', 'brackets', 'advanced', 'full'][option('autoIndent')],
     autoClosingBrackets: option('autoClosingBrackets'),
@@ -212,17 +230,101 @@ function simulateMonacoInput(token, text) {
     const accepted = element.dispatchEvent(keyboard('keydown'));
     // Monaco handles Enter in keydown. Printable characters (and literal tabs)
     // need the text-input stage that untrusted KeyboardEvents cannot generate.
-    if (accepted) {
+    if (model.getVersionId() !== versionBeforeKey) {
+      if (model.getValue() !== expected) {
+        return { success: false, error: 'The Monaco editor changed or rejected the typed text.' };
+      }
+    } else if (accepted) {
       element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
       element.dispatchEvent(new InputEvent('input', { data: text,
         inputType: 'insertText', bubbles: true }));
-    } else if (text !== '\n' || model.getVersionId() === versionBeforeKey) {
+    } else {
       return { success: false, error: 'The editor intercepted the simulated key.' };
     }
     element.dispatchEvent(keyboard('keyup'));
-    return { success: true };
   } finally {
     editor.updateOptions(saved);
+  }
+  await Promise.resolve();
+  return element.isConnected && model.getValue() === expected
+    ? { success: true }
+    : { success: false, error: 'The Monaco editor changed or rejected the typed text.' };
+}
+
+// CodeMirror 6.36 exposes cmView; 6.41 uses cmTile. These page-owned DOM
+// expandos are hidden from isolated content scripts. Resolve the public view
+// API from that one element, then verify its identity before dispatching.
+async function editCodeMirror(token, operation, text) {
+  try {
+    const resolveTarget = () => {
+      const matches = Array.from(document.querySelectorAll('.cm-content'))
+        .filter(element => element.getAttribute('data-paste-typer-target') === token);
+      const element = matches.length === 1 ? matches[0] : null;
+      const candidate = element?.cmView?.rootView?.view || element?.cmTile?.root?.view;
+      const view = candidate?.constructor?.findFromDOM?.(element);
+      return element?.isConnected && element.ownerDocument === document && view && view === candidate &&
+        view.contentDOM === element && view.dom === element.closest('.cm-editor') && view.root === document
+        ? { element, view } : null;
+    };
+    const selected = resolveTarget();
+    if (!selected) {
+      return { success: false, error: 'Cannot access the selected CodeMirror editor. No text was inserted.' };
+    }
+    const { element, view } = selected;
+    const isCurrent = () => {
+      const current = resolveTarget();
+      return current?.element === element && current.view === view;
+    };
+    const unavailable = () => ({ success: false,
+      error: 'The selected CodeMirror editor changed or was removed before the edit was confirmed.' });
+    let state = view.state;
+    if (state.readOnly || !element.isContentEditable) {
+      return { success: false, error: 'The selected CodeMirror editor is not editable.' };
+    }
+    if (operation === 'focus') {
+      // Model selection survives blur. Restoring a DOM Range could overwrite it
+      // or point at a line CodeMirror replaced during its last redraw.
+      view.focus();
+      await Promise.resolve();
+      return isCurrent() ? { success: true } : unavailable();
+    }
+    let spec;
+    if (operation === 'type') {
+      spec = state.replaceSelection(text === '\n' ? state.lineBreak : text);
+    } else if (operation === 'backspace') {
+      spec = state.changeByRange(range => {
+        const from = range.empty ? view.moveByChar(range, false).head : range.from;
+        return { changes: { from, to: range.to, insert: '' }, range: state.selection.constructor.cursor(from) };
+      });
+    } else {
+      // Match Select All followed by deletion. The explicit selection also
+      // keeps Clear separate from the preceding typing group in native history.
+      const selection = state.selection.constructor.single(0, state.doc.length);
+      view.dispatch({ selection, userEvent: 'select' });
+      await Promise.resolve();
+      if (!isCurrent()) return unavailable();
+      if (!view.state.selection.eq(selection)) {
+        return { success: false, error: 'The selected CodeMirror editor did not accept Select All.' };
+      }
+      state = view.state;
+      spec = state.replaceSelection('');
+    }
+    const expectedDoc = state.changes(spec.changes).apply(state.doc);
+    const expectedSelection = spec.selection;
+    const userEvent = operation === 'type' ? 'input.type' : operation === 'backspace' ? 'delete.backward' : 'delete.selection';
+    view.dispatch({ ...spec, userEvent, scrollIntoView: true });
+    // Hosts may restore controlled state or remove this view in a microtask.
+    // Confirm after that work, before the typing engine advances its progress.
+    await Promise.resolve();
+    if (!isCurrent()) return unavailable();
+    // Respect transaction filters and host dispatchers, but do not report an
+    // ignored/rewritten edit as successful and advance past missing text.
+    if (!view.state.doc.eq(expectedDoc) || !view.state.selection.eq(expectedSelection)) {
+      return { success: false, error: 'The selected CodeMirror editor did not accept the requested edit.' };
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message || 'CodeMirror input failed.' };
   }
 }
 
@@ -232,12 +334,42 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // popup cannot choose a tab, frame, or document through this message.
   if (!sender.tab || !sender.documentId || !/^https?:|^about:/.test(sender.url || '') ||
       typeof request.token !== 'string' || typeof request.text !== 'string' ||
-      request.text.length === 0 || request.text.length > 2) return;
+      request.text.length === 0 || /[\uD800-\uDFFF]/u.test(request.text)) return;
+  // A grapheme can contain arbitrarily many combining marks. Check its actual
+  // boundary instead of imposing a code-unit limit or splitting emoji sequences.
+  const parts = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    .segment(request.text)[Symbol.iterator]();
+  parts.next();
+  if (!parts.next().done) return;
   chrome.scripting.executeScript({
     target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
     world: 'MAIN', func: simulateMonacoInput, args: [request.token, request.text]
   }).then(results => sendResponse(results[0]?.result ||
     { success: false, error: 'The selected editor is no longer available.' }))
+    .catch(error => sendResponse({ success: false, error: error.message }));
+  return true;
+});
+
+function isCodeMirrorCharacter(text) {
+  // Unicode mode rejects lone UTF-16 surrogates while accepting complete pairs.
+  // Chrome 106 supports Segmenter but predates String.prototype.isWellFormed.
+  return typeof text === 'string' && text.length > 0 && !/[\uD800-\uDFFF]/u.test(text) &&
+    Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)).length === 1;
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action !== 'ptCodeMirrorInput') return;
+  if (!sender.tab || !sender.documentId || !/^(https?:|about:)/.test(sender.url || '') ||
+      typeof request.token !== 'string' || !request.token || request.token.length > 128 ||
+      !['focus', 'type', 'backspace', 'clear'].includes(request.operation) ||
+      (request.operation === 'type' ? !isCodeMirrorCharacter(request.text) : request.text !== undefined)) return;
+  // Only the isolated content script can invoke this bridge. Page messages and
+  // caller-provided tab/frame IDs never route edits into a different document.
+  chrome.scripting.executeScript({
+    target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
+    world: 'MAIN', func: editCodeMirror, args: [request.token, request.operation, request.text || '']
+  }).then(results => sendResponse(results[0]?.result ||
+    { success: false, error: 'The selected CodeMirror editor is no longer available.' }))
     .catch(error => sendResponse({ success: false, error: error.message }));
   return true;
 });

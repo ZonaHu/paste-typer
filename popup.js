@@ -8,7 +8,12 @@ if (typeof globalThis.PT_DEBUG === "undefined") {
 
 class PopupController {
   constructor() {
+    this.textVersion = 0;
+    this.sourceRevision = 0;
+    this.rememberSourceText = true;
     this.textInput = document.getElementById('textInput');
+    this.rememberText = document.getElementById('rememberText');
+    this.deleteSavedText = document.getElementById('deleteSavedText');
     this.speedSlider = document.getElementById('speedSlider');
     this.speedValue = document.getElementById('speedValue');
     this.typoChanceSlider = document.getElementById('typoChanceSlider');
@@ -35,6 +40,7 @@ class PopupController {
     this.navigationStatus = document.getElementById('navigationStatus');
     
     this.progressInterval = null;
+    this.sessionState = 'idle';
     this.isNavigationMode = false;
     this.tabId = null;
     this.frameOrigin = document.getElementById('frameOrigin');
@@ -43,25 +49,50 @@ class PopupController {
     this.prepareFrames();
 
     this.setupEventListeners();
-    this.loadSettings();
+    this.settingsReady = this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
     this.checkCurrentTab();
     this.checkActiveElement();
     this.syncTypingState();
   }
 
   setupEventListeners() {
+    // Synthetic checkbox/label clicks can generate a trusted change event.
+    // Cancel their default action before it reaches the preference handler.
+    document.getElementById('textPrivacy').addEventListener('click', event => {
+      if (event.isTrusted !== true) event.preventDefault();
+    }, true);
+    this.rememberText.addEventListener('change', event => {
+      if (event.isTrusted !== true) return;
+      this.updateTextPrivacy('save', { rememberText: this.rememberText.checked });
+    });
+    this.deleteSavedText.addEventListener('click', event => {
+      if (event.isTrusted !== true) return;
+      this.updateTextPrivacy('clearText');
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      const change = changes.pasteTyperSettings;
+      if (area !== 'local' || !change) return;
+      this.sourceRevision = change.newValue?.textRevision || 0;
+      const remember = change.newValue?.rememberText !== false;
+      if (this.rememberSourceText !== remember) this.textVersion++;
+      this.rememberSourceText = this.rememberText.checked = remember;
+      if (change.oldValue?.textRevision !== change.newValue?.textRevision ||
+          (change.oldValue && 'text' in change.oldValue && !('text' in (change.newValue || {}))) ||
+          (change.oldValue?.rememberText !== false && change.newValue?.rememberText === false)) {
+        this.textVersion++;
+        this.textInput.value = '';
+      }
+    });
     this.speedSlider.addEventListener('input', () => {
       const speed = this.speedSlider.value;
       this.speedValue.textContent = `${speed}ms`;
-      this.saveSettings();
+      this.saveSettings('speed');
     });
 
     if (this.typoChanceSlider) {
       this.typoChanceSlider.addEventListener('input', () => {
-        const value = parseInt(this.typoChanceSlider.value);
-        const percentage = (value / 100).toFixed(1);
-        this.typoChanceValue.textContent = `${percentage}%`;
-        this.saveSettings();
+        this.typoChanceValue.textContent = PTTypoRate.formatPercent(this.typoChanceSlider.value);
+        this.saveSettings('typoChance');
       });
     }
 
@@ -113,21 +144,28 @@ class PopupController {
     });
 
     this.textInput.addEventListener('input', () => {
-      this.saveSettings();
+      this.textEdited = true;
+      this.textVersion++;
+      this.saveSettings('text');
     });
   }
 
   async loadFromClipboard() {
     try {
+      const version = this.textVersion;
+      await this.settingsReady;
+      const revision = this.sourceRevision;
       this.showStatus('Loading from clipboard...', 'info');
       // With the clipboardRead permission this is reliable inside the popup.
       const text = await navigator.clipboard.readText();
+      if (version !== this.textVersion) return;
       if (!text) {
         this.showStatus('Clipboard is empty', 'error');
         return;
       }
+      const saved = await this.settingsRequest('save', { text }, revision);
+      if (version !== this.textVersion || (saved.textRevision || 0) !== revision) return;
       this.textInput.value = text;
-      this.saveSettings();
       this.showStatus('Clipboard text loaded', 'success');
     } catch (error) {
       this.showStatus('Could not read clipboard. Copy some text and try again.', 'error');
@@ -148,7 +186,7 @@ class PopupController {
       this.startButton.disabled = true;
       
       // Get current settings
-      const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.005;
+      const typoChance = PTTypoRate.toProbability(this.typoChanceSlider?.value);
       const speed = parseInt(this.speedSlider.value);
 
       const response = await this.sendMessageToTab({
@@ -186,7 +224,6 @@ class PopupController {
     try {
       await this.sendMessageToTab({ action: 'stopTyping' });
       this.showStatus('Typing stopped', 'info');
-      this.stopProgressTracking();
       this._setControls(false);
     } catch (error) {
       this.showStatus('Error stopping: ' + error.message, 'error');
@@ -195,66 +232,52 @@ class PopupController {
 
   async togglePause() {
     try {
-      const isPaused = this.pauseButton.textContent.includes('Resume');
-      
-      if (isPaused) {
-        // Currently paused, so resume
-        await this.sendMessageToTab({ action: 'resumeTyping' });
-        this.showStatus('Typing resumed', 'info');
-        this.pauseButton.textContent = 'Pause';
-        this.pauseButton.style.backgroundColor = '#f59e0b';
-      } else {
-        // Currently typing, so pause
-        await this.sendMessageToTab({ action: 'pauseTyping' });
-        this.showStatus('Typing paused', 'info');
-        this.pauseButton.textContent = 'Resume';
-        this.pauseButton.style.backgroundColor = '#16a34a';
-      }
-    } catch (error) {
-      this.showStatus('Error toggling pause: ' + error.message, 'error');
-    }
+      await this.sendMessageToTab({ action: this.sessionState === 'paused' ? 'resumeTyping' : 'pauseTyping' });
+      await this.syncTypingState();
+    } catch (error) { this.showStatus('Error toggling pause: ' + error.message, 'error'); }
   }
 
   async resetTyping() {
     try {
       await this.sendMessageToTab({ action: 'resetTyping' });
       this.showStatus('All text in the selected field was cleared', 'info');
-      this.stopProgressTracking();
       this._setControls(false);
     } catch (error) {
       this.showStatus('Error resetting: ' + error.message, 'error');
     }
   }
 
+  renderTypingState(progress) {
+    const state = progress.state || (progress.isTyping ? progress.isPaused ? 'paused' : 'running' : 'idle');
+    const changed = state !== this.sessionState || progress.sessionId !== this.lastSessionId;
+    this.sessionState = state;
+    this.lastSessionId = progress.sessionId;
+    const active = state === 'running' || state === 'paused';
+    const clearing = state === 'clearing';
+    this._setControls(active || clearing);
+    this.startButton.disabled = active || clearing || state === 'stopping';
+    this.pauseButton.disabled = !active;
+    this.stopButton.disabled = !(active || clearing);
+    this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
+    this.pauseButton.style.backgroundColor = state === 'paused' ? '#16a34a' : '#f59e0b';
+    this.progressContainer.style.display = active ? 'block' : 'none';
+    this.progressBar.style.width = `${progress.total ? progress.position / progress.total * 100 : 0}%`;
+    this.progressText.textContent = `${progress.position} / ${progress.total}`;
+    this.progressBar.style.backgroundColor = state === 'paused' ? '#f59e0b' : '';
+    if (!changed) return;
+    if (state === 'error') this.showStatus(progress.error || 'Typing failed', 'error');
+    else if (state === 'stopped') this.showStatus('Typing stopped', 'info');
+    else if (state === 'stopping') this.showStatus('Stopping...', 'info');
+    else if (state === 'clearing') this.showStatus('Clearing selected field...', 'info');
+    else if (state === 'completed') this.showStatus(progress.deliveryVerified === false
+      ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete',
+    progress.deliveryVerified === false ? 'info' : 'success');
+    else if (state === 'paused') this.showStatus('Typing paused', 'info');
+    else if (state === 'running') this.showStatus('Typing...', 'info');
+  }
+
   startProgressTracking() {
-    this.progressContainer.style.display = 'block';
-    this.progressInterval = setInterval(async () => {
-      try {
-        const response = await this.sendMessageToTab({ action: 'getTypingProgress' });
-        if (response) {
-          const { position, total, isTyping, isPaused } = response;
-          
-          if (!isTyping) {
-            this.stopProgressTracking();
-            this._setControls(false);
-            this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
-            return;
-          }
-          
-          const percentage = total > 0 ? (position / total) * 100 : 0;
-          this.progressBar.style.width = percentage + '%';
-          this.progressText.textContent = `${position} / ${total}`;
-          
-          if (isPaused) {
-            this.progressBar.style.backgroundColor = '#f59e0b';
-          } else {
-            this.progressBar.style.backgroundColor = '';
-          }
-        }
-      } catch (error) {
-        debug.log('Progress tracking error:', error);
-      }
-    }, 500);
+    if (!this.progressInterval) this.progressInterval = setInterval(() => this.syncTypingState(), 250);
   }
 
   stopProgressTracking() {
@@ -284,15 +307,13 @@ class PopupController {
   // buttons aren't stuck showing Pause/Stop after typing finished (or vice versa).
   async syncTypingState() {
     try {
-      const r = await this.sendMessageToTab({ action: 'getTypingProgress' });
-      if (r && r.isTyping) {
-        this._setControls(true);
-        this.startProgressTracking();
-      } else {
-        this._setControls(false);
-      }
-    } catch (e) {
+      const response = await this.sendMessageToTab({ action: 'getTypingProgress' });
+      this.renderTypingState(response);
+      this.startProgressTracking();
+    } catch (error) {
+      this.stopProgressTracking();
       this._setControls(false);
+      this.showStatus(error.message, 'error');
     }
   }
 
@@ -316,7 +337,7 @@ class PopupController {
         this.findInputsButton.style.color = '#fff';
         this.findInputsButton.style.borderColor = '#ef4444';
         
-        this.updateNavigationStatus(1, response.count);
+        this.updateNavigationStatus(response.selectedIndex + 1, response.count);
         this.showStatus(`Found ${response.count} input field(s)! Use buttons below to navigate.`, 'success');
       } else if (response && response.canvasEditor) {
         this.showStatus('Google Docs/Slides: double-click a text box to edit it, then press Start (no need to navigate).', 'info');
@@ -337,7 +358,7 @@ class PopupController {
         this.updateNavigationStatus(response.selectedIndex + 1, response.total);
       }
     } catch (error) {
-      console.error('Navigation error:', error);
+      this.showStatus('Navigation error: ' + error.message, 'error');
     }
   }
 
@@ -348,7 +369,7 @@ class PopupController {
         this.updateNavigationStatus(response.selectedIndex + 1, response.total);
       }
     } catch (error) {
-      console.error('Navigation error:', error);
+      this.showStatus('Navigation error: ' + error.message, 'error');
     }
   }
 
@@ -521,33 +542,62 @@ class PopupController {
   }
 
   showStatus(message, type) {
+    clearTimeout(this.statusTimeout);
     this.status.textContent = message;
     this.status.className = `status ${type}`;
     this.status.style.display = 'block';
     
     if (type === 'success' || type === 'info') {
-      setTimeout(() => {
+      this.statusTimeout = setTimeout(() => {
         this.status.style.display = 'none';
       }, 3000);
     }
   }
 
-  saveSettings() {
-    const settings = {
-      text: this.textInput.value,
-      speed: this.speedSlider.value,
-      typoChance: this.typoChanceSlider ? this.typoChanceSlider.value : 5
-    };
-    
-    chrome.storage.local.set({ pasteTyperSettings: settings });
+  async settingsRequest(operation, settings, textRevision = this.sourceRevision) {
+    const response = await chrome.runtime.sendMessage({ action: 'ptSettings', operation, settings, textRevision });
+    if (!response?.success) throw new Error(response?.error || 'Settings are unavailable.');
+    return response.settings;
   }
 
-  loadSettings() {
-    chrome.storage.local.get(['pasteTyperSettings'], (result) => {
-      if (result.pasteTyperSettings) {
-        const settings = result.pasteTyperSettings;
+  async updateTextPrivacy(operation, settings) {
+    this.textVersion++;
+    try {
+      const saved = await this.settingsRequest(operation, settings);
+      this.rememberSourceText = this.rememberText.checked = saved.rememberText;
+      if (operation === 'clearText' || !saved.rememberText) this.textInput.value = '';
+      this.showStatus(operation === 'clearText' ? 'Saved text deleted' :
+        saved.rememberText ? 'New text will be remembered' : 'Text will no longer be saved', 'info');
+    } catch (error) {
+      this.showStatus('Failed to change text privacy: ' + error.message, 'error');
+    }
+  }
+
+  async saveSettings(field = 'text') {
+    const values = { text: this.textInput.value, speed: this.speedSlider.value,
+      typoChance: this.typoChanceSlider ? this.typoChanceSlider.value : '5' };
+    const version = this.textVersion;
+    try {
+      await this.settingsReady;
+      if (field === 'text' && version !== this.textVersion) return;
+      await this.settingsRequest('save', { [field]: values[field] });
+    } catch (error) {
+      this.showStatus('Failed to save settings: ' + error.message, 'error');
+    }
+  }
+
+  async loadSettings() {
+      const settings = await this.settingsRequest('get');
+      // A privacy change can arrive while the initial response is in flight.
+      const currentSource = (settings.textRevision || 0) >= this.sourceRevision;
+      if (currentSource) {
+        this.sourceRevision = settings.textRevision || 0;
+        this.rememberSourceText = this.rememberText.checked = settings.rememberText;
+      }
+      this.rememberText.disabled = this.deleteSavedText.disabled = false;
+      if (settings) {
         
-        if (settings.text) {
+        if (currentSource && settings.rememberText && settings.text && !this.textEdited) {
           this.textInput.value = settings.text;
         }
         
@@ -557,22 +607,15 @@ class PopupController {
         }
         
         if (this.typoChanceSlider) {
-          if (settings.typoChance !== undefined) {
-            this.typoChanceSlider.value = settings.typoChance;
-            const percentage = (parseInt(settings.typoChance) / 100).toFixed(1);
-            this.typoChanceValue.textContent = `${percentage}%`;
-          } else {
-            this.typoChanceSlider.value = 5;
-            this.typoChanceValue.textContent = '0.5%';
-          }
+          this.typoChanceSlider.value = PTTypoRate.normalizePercent(settings.typoChance);
+          this.typoChanceValue.textContent = PTTypoRate.formatPercent(settings.typoChance);
         }
       } else {
         if (this.typoChanceSlider) {
-          this.typoChanceSlider.value = 5;
-          this.typoChanceValue.textContent = '0.5%';
+          this.typoChanceSlider.value = PTTypoRate.normalizePercent();
+          this.typoChanceValue.textContent = PTTypoRate.formatPercent();
         }
       }
-    });
   }
 
   async openFloatingUI() {

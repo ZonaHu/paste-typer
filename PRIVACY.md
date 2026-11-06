@@ -1,6 +1,6 @@
 # Paste Typer — Privacy Policy
 
-_Last updated: 2026-10-07_
+_Last updated: 2026-11-05_
 
 Paste Typer is a Chrome extension that types clipboard text character-by-character
 into web forms. This policy describes what data the extension handles.
@@ -21,7 +21,14 @@ and only for the feature you invoke:
   press Start) typed into the focused form on the active page. It is never
   sent anywhere else.
 - **The text you type into the extension's text field** — stored in
-  `chrome.storage.local` so the field persists between sessions.
+  `chrome.storage.local` while **Remember text** is enabled (the default, preserving
+  existing behavior). Turn it off in either the popup or floating UI to delete
+  previously saved source and prevent further source-text storage from both UIs.
+  New source text remains in the open panel's memory and can still be typed;
+  closing/recreating that panel discards it. **Delete saved text** deletes the
+  saved source and clears it from open controls without changing Remember text,
+  speed, typo rate, or floating position. Neither action erases text already typed
+  into a website or stops a running typing session.
 - **Your speed / typo-rate slider settings** — stored in `chrome.storage.local`.
 - **The floating UI's last on-screen position** — stored in `chrome.storage.local`.
 - **The currently focused element on the active tab** — read only to know where

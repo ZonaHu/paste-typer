@@ -90,10 +90,10 @@ would erase the existing-user condition.
 
 | Installation and page | Navigate | Start / exact output | Stop | Floating panel opens | Status |
 | --- | --- | --- | --- | --- | --- |
-| Store 1.1.1 → 1.1.2, already-open page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
+| Store 1.1.2 → next release, already-open page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
 | Same Store upgrade, refreshed page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
 | Same Store upgrade, new page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
-| Disabled by 1.1.0 permission change → 1.1.2 | Pending | Pending | Pending | Pending | Record whether manual re-enable is required |
+| Installation disabled by an earlier permission change → next release | Pending | Pending | Pending | Pending | Record whether manual re-enable is required |
 | Unpacked 1.1.1 / pre-change 1.1.2 → candidate, already-open/refreshed/new fixture | Pass | Pass | Pass | Pass, including Start | Local regression only |
 
 For the permission-disabled case, record enabled state both before and after the
