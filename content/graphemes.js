@@ -4,6 +4,8 @@ const PTGraphemes = {
   segmenter: new Intl.Segmenter(undefined, { granularity: 'grapheme' }),
 
   split(text) {
+    // Reject malformed source strings rather than dispatching a surrogate half.
+    if (/[\uD800-\uDFFF]/u.test(text)) throw new Error('The text contains an incomplete Unicode character. Copy it again.');
     return Array.from(this.segmenter.segment(text), part => part.segment);
   },
 

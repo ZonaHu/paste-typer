@@ -11,7 +11,7 @@ function engine() {
   const element = { tagName: 'TEXTAREA' };
   const adapter = { getTarget: async () => ({ element }), focus: async () => {},
     typeCharacter: async (_, text) => { payloads.push(text); return { success: true }; } };
-  const context = vm.createContext({ console, setTimeout, clearTimeout,
+  const context = vm.createContext({ console: { ...console, error() {} }, setTimeout, clearTimeout,
     window: { addEventListener() {} }, document: { addEventListener() {}, activeElement: element },
     chrome: { runtime: { onMessage: { addListener(fn) { listeners.push(fn); } } },
       storage: { local: { get(_, callback) { callback({}); } } } },
@@ -35,6 +35,13 @@ test('engine sends complete graphemes and reports grapheme progress', async () =
   assert.deepEqual(payloads, ['A', '😀', 'B', 'e\u0301', '🇨🇦', '👨‍👩‍👧‍👦', longCluster]);
   assert.equal(progress().position, 7);
   assert.equal(progress().total, 7);
+});
+
+test('engine rejects malformed UTF-16 before emitting any input payload', async () => {
+  const { typer, payloads } = engine();
+  await assert.rejects(typer.startTyping('A\ud83dB'), /incomplete Unicode/);
+  assert.deepEqual(payloads, []);
+  assert.equal(typer.isTyping, false);
 });
 
 test('pause and resume retain the next complete grapheme', async () => {
