@@ -32,7 +32,7 @@
 
 Some sites disable paste. Banking portals, exam platforms, government forms, "confirm your email" fields, admin panels that call `preventDefault()` on every paste event. You end up retyping a 40-character password or a long ID by hand.
 
-Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input` / `keyup` events one character at a time, with human-like timing, so the page sees typing instead of a paste.
+Paste Typer types it for you. It dispatches synthetic `keydown` / `keypress` / `input` / `keyup` events one character at a time, with human-like timing. Some editors reject these events; browser-trusted keyboard input cannot be created by JavaScript.
 
 ## Features
 
@@ -41,8 +41,10 @@ Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input
 - **Right-click → "Paste as typed text"** on any editable field
 - **Adjustable speed and typo rate**
 - **Floating in-page UI**, draggable, isolated in a Shadow DOM
+- **Shared Start, Pause/Resume, and Stop controls** across the popup and floating UI
 - **Google Docs and Slides support** via a canvas-editor adapter
 - **Monaco textarea-based editors**, including editors in embedded frames
+- **CodeMirror 6 editors**, using editor transactions and native undo history
 - **Input navigation mode** to step through editable fields on a page
 - **Zero dependencies, zero network requests** — everything runs locally
 
@@ -66,10 +68,32 @@ git clone https://github.com/ZonaHu/paste-typer.git
 
 Start inserts at your caret or replaces only selected text, preserving the rest
 of the field. **Clear entire field** explicitly deletes all content in the selected field.
+Clear is unavailable in Notion and block-based editors where a page-wide selection
+could also delete other blocks or the page title. Use the editor's own selection
+and delete controls there.
+Start remains unavailable while Clear is working. Stop cancels pending Clear steps
+and waits for any edit already dispatched before reporting that it has stopped.
 
 **Right-click menu** — copy text, right-click the target field, choose "Paste as typed text".
 
+**Stop shortcut** — press **Ctrl+Shift+K** (**Command+Shift+K** on macOS) to
+send Stop to the running or paused session in the current tab, including a
+permitted embedded editor. The popup and floating panel can both be closed.
+Choose or change the binding at `chrome://extensions/shortcuts` if the suggested
+key is already in use. It works while Chrome has focus; it does not stop sessions
+in other tabs.
+
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
+
+**Typo rate** — the slider is a percentage per eligible character: 5 means a 5%
+chance. Earlier labels understated the rate while the typing engine used the
+saved value as a percentage. Saved slider values keep that meaning: a saved 5
+still means 5%, and the corrected label now shows 5%. The default is 5% in the
+popup, floating UI and context menu. Set it to 0 for no simulated typos.
+**Text privacy** — turn off **Remember text** in either UI to delete saved source
+and keep future text only in that open panel. You can still type it normally.
+**Delete saved text** removes saved source without resetting your preferences.
+Turning Remember text back on saves only text you enter afterward.
 
 **Embedded editors** — if the editor is hosted on another site, choose its site under
 "Allow access to an embedded editor's site" in the popup and click "Allow selected
@@ -83,6 +107,18 @@ enters through keyboard/text-input events, not clipboard paste or direct model
 edits. Newer Monaco configurations using EditContext rather than a textarea
 are not supported yet. Chrome 106 or newer is required.
 
+**Navigate** — starts at the field you last selected, or the first writable
+field when none is selected. It skips hidden, disabled, read-only and inert
+controls, and lists each rich-text editing area once. If the page changes while
+you navigate, unavailable fields are skipped and Select verifies the field again.
+Chrome's protected pages, including the Chrome Web Store, cannot be used.
+CodeMirror 6 uses the selected editor view's transaction API to insert each
+character, preserving its model selection and native undo history. The adapter
+requires the standard document-hosted `.cm-editor` / `.cm-content` view metadata;
+versions 6.36.2 and 6.41.0 are verified with a local real-editor fixture. If the
+view cannot be resolved or rejects the edit, typing stops with an error. No
+CodeMirror library is bundled with the extension.
+
 ## Supported fields
 
 | Field type | Supported |
@@ -90,12 +126,21 @@ are not supported yet. Chrome 106 or newer is required.
 | `<input>` (text, email, password, search, url, tel) | ✅ |
 | `<textarea>` | ✅ |
 | `contenteditable` | ✅ |
-| Google Docs / Slides canvas | ✅ |
+| Google Docs / Slides canvas | Keystrokes sent; check the document |
 | Monaco textarea-based editor (including permitted iframes) | ✅ |
+| CodeMirror 6 (verified 6.36.2 and 6.41.0, including permitted iframes) | ✅ |
+
+Ordinary inputs, contenteditable fields, and supported Monaco editors verify the
+observed text after each simulated input, including immediate event-handler
+responses. A detected change or rejection stops typing and retains the source
+and failure position. Later page changes cannot be verified by this check.
+Google Docs and Slides do not expose accepted canvas text safely, so their
+completion message asks you to check the document. No automatic retry rewrites
+your field.
 
 ## How it works
 
-The content script is injected on demand, only when you invoke the extension. An adapter manager picks the right input adapter for the page, focuses the target field, and types one character at a time — dispatching the full keyboard event sequence for each character, with randomized delays and optional typos so the input looks human.
+The content script is injected on demand, only when you invoke the extension. An adapter manager picks the right input adapter for the page, focuses the target field, and types one character at a time, with randomized delays and optional typos. Adapters use keyboard/text-input events or the editor's transaction API as appropriate; CodeMirror transactions are marked as typed input for native undo grouping.
 
 ```
 manifest.json        MV3 config
@@ -106,6 +151,7 @@ content/
   standardInputAdapter.js  <input> / <textarea> / contenteditable
   googleDocsAdapter.js     Google Docs & Slides canvas editor
   monacoAdapter.js         Monaco keyboard/text input with temporary option suppression
+  codeMirrorAdapter.js     CodeMirror 6 transactions through a document-scoped bridge
   targetTracker.js         remembers the selected field and native selection
   adapterManager.js        picks the adapter for the page
 frameRouter.js             selects and addresses a single permitted frame
@@ -119,7 +165,7 @@ No network requests. No analytics. No accounts.
 
 - The clipboard is read **only** when you click "Load from Clipboard" or use the context menu
 - No required host permissions — `activeTab` covers the main site's origin; embedded sites can be allowed individually
-- Settings live in `chrome.storage.local` (browser-local, not synced)
+- Settings live in `chrome.storage.local` (browser-local, not synced); source text can be excluded with Remember text
 
 Full details in [PRIVACY.md](PRIVACY.md).
 
@@ -144,6 +190,7 @@ granting access does not install automatic scripts on that site.
 
 | Problem | Fix |
 |---|---|
+| Chrome Web Store | Chrome blocks extensions on the Web Store. Open a regular website, or serve the demo page locally, to use Navigate and typing. |
 | Nothing happens | Click into an editable field first, then press Start |
 | Extension stopped working after an update | In Chrome's extension manager, re-enable Paste Typer if Chrome paused it for a new permission. Refresh the affected tab, then reopen Paste Typer. |
 | "Receiving end does not exist" | Refresh the affected tab and reopen Paste Typer. If it persists, check that Paste Typer is enabled in Chrome's extension manager. |

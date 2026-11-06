@@ -216,11 +216,11 @@ class GoogleDocsAdapter extends InputAdapter {
     const charCode = char.length ? char.codePointAt(0) : 32;
     if (char === ' ' || char.length === 0) return { code: 'Space', keyCode: 32, charCode: 32 };
 
-    if (/[a-zA-Z]/.test(char)) {
+    if (/^[a-zA-Z]$/.test(char)) {
       const upper = char.toUpperCase();
       return { code: `Key${upper}`, keyCode: upper.charCodeAt(0), charCode };
     }
-    if (/[0-9]/.test(char)) {
+    if (/^[0-9]$/.test(char)) {
       return { code: `Digit${char}`, keyCode: char.charCodeAt(0), charCode };
     }
 

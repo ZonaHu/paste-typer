@@ -6,12 +6,13 @@ const path = require('node:path');
 
 function setup() {
   const document = { activeElement: null, addEventListener() {} };
-  const context = vm.createContext({ document, Date, window: { getSelection() { return { rangeCount: 0 }; } } });
+  const context = vm.createContext({ document, Date, getComputedStyle: element => ({ visibility: 'visible', opacity: '1', display: 'block', ...element.computedStyle }), window: { getSelection() { return { rangeCount: 0 }; } } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../content/targetTracker.js'), 'utf8'), context);
   return vm.runInContext('targetTracker', context);
 }
 function input({ controls = false } = {}) {
   return { tagName: 'TEXTAREA', type: 'textarea', isConnected: true,
+    matches: () => false, getBoundingClientRect: () => ({ width: 120, height: 40 }),
     selectionStart: 3, selectionEnd: 5, selectionDirection: 'backward',
     closest: () => controls ? {} : null,
     focus(options) { this.focusOptions = options; this.selectionStart = this.selectionEnd = 0; },
@@ -31,4 +32,16 @@ test('removed or read-only targets are invalidated', () => {
   const tracker = setup(); const editor = input();
   tracker.capture(editor); editor.isConnected = false; assert.equal(tracker.getTarget(), null);
   editor.isConnected = true; editor.readOnly = true; assert.equal(tracker.getTarget(), null);
+});
+
+test('invisible and inherited-disabled targets are invalidated before typing', () => {
+  for (const change of [
+    editor => { editor.matches = selector => selector === ':disabled'; },
+    editor => { editor.computedStyle = { visibility: 'hidden' }; },
+    editor => { editor.parentElement = { computedStyle: { opacity: '0' } }; },
+    editor => { editor.parentElement = { computedStyle: { contentVisibility: 'hidden' } }; },
+  ]) {
+    const tracker = setup(); const editor = input(); tracker.capture(editor);
+    change(editor); assert.equal(tracker.getTarget(), null);
+  }
 });

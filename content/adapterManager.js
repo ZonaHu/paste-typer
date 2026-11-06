@@ -16,6 +16,7 @@ class AdapterManager {
   constructor() {
     this.adapters = [];
     this.registerAdapter(GoogleDocsAdapter);
+    this.registerAdapter(SplitCodeInputAdapter);
     this.registerAdapter(StandardInputAdapter);
   }
 
@@ -24,11 +25,12 @@ class AdapterManager {
   }
 
   getAdapter(element = targetTracker.getTarget() || document.activeElement) {
+    if (CodeMirrorAdapter.detect(element)) return new CodeMirrorAdapter();
     if (MonacoAdapter.detect(element)) return new MonacoAdapter();
     debug.log('[AdapterManager] Checking adapters...');
     for (const AdapterClass of this.adapters) {
       const adapterName = AdapterClass.name;
-      const detected = AdapterClass.detect();
+      const detected = AdapterClass.detect(element);
       debug.log('[AdapterManager]', adapterName, 'detect():', detected);
       if (detected) {
         debug.log('[AdapterManager] Using adapter:', adapterName);
