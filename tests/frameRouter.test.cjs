@@ -243,3 +243,10 @@ test('a legacy bridge in a child frame blocks routing instead of falling back to
   await assert.rejects(router.route(1, { action: 'startTyping', text: 'must not type' }), /Reload the extension and refresh/);
   assert.equal(sent.filter(command => command.message.action === 'startTyping').length, 0);
 });
+
+test('Chrome Web Store injection restrictions produce actionable guidance', async () => {
+  const { router, chrome, sent } = setup();
+  chrome.scripting.executeScript = async () => { throw new Error('The extensions gallery cannot be scripted.'); };
+  await assert.rejects(router.route(1, { action: 'startInputNavigation' }), /Chrome Web Store.*regular website/);
+  assert.equal(sent.length, 0);
+});

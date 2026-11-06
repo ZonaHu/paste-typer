@@ -128,18 +128,20 @@ class PasteTyper {
         sendResponse({success: true});
       } else if (request.action === 'selectCurrentInput') {
         const success = this.selectCurrentInput();
-        sendResponse({success: success});
+        sendResponse({ success, error: success ? undefined : 'The highlighted field is unavailable or could not be focused. Navigate to another field and try again.' });
       } else if (request.action === 'navigatePrevious') {
-        this.navigateToPrevious();
+        const success = this.navigateToPrevious();
         sendResponse({
-          success: true,
+          success,
+          error: success ? undefined : 'No writable text fields remain. Use Navigate again.',
           selectedIndex: this.selectedInputIndex,
           total: this.availableInputs.length
         });
       } else if (request.action === 'navigateNext') {
-        this.navigateToNext();
+        const success = this.navigateToNext();
         sendResponse({
-          success: true,
+          success,
+          error: success ? undefined : 'No writable text fields remain. Use Navigate again.',
           selectedIndex: this.selectedInputIndex,
           total: this.availableInputs.length
         });
@@ -1445,30 +1447,40 @@ class PasteTyper {
     debug.log('Direct clear completed');
   }
 
+  _isNavigationTarget(element) {
+    if (!targetTracker.isEditable(element) || element.matches(':disabled') || element.closest('[inert]')) return false;
+    // Nested editable blocks share their parent's editing host; re-enabled
+    // editors inside a contenteditable=false island are separate targets.
+    if (!['INPUT', 'TEXTAREA'].includes(element.tagName) && element.parentElement?.isContentEditable) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = getComputedStyle(element);
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+      const computed = getComputedStyle(ancestor);
+      if (computed.display === 'none' || computed.contentVisibility === 'hidden' || Number(computed.opacity) === 0) return false;
+    }
+    return true;
+  }
+
+  _findNavigationTargets() {
+    return Array.from(document.querySelectorAll('input, textarea, [contenteditable]'))
+      .filter(element => this._isNavigationTarget(element));
+  }
+
+  _refreshNavigationTargets() {
+    const selected = this.availableInputs[this.selectedInputIndex];
+    this.availableInputs.forEach(input => input.classList.remove('paste-typer-input-available', 'paste-typer-input-selected'));
+    this.availableInputs = this._findNavigationTargets();
+    this.selectedInputIndex = this.availableInputs.indexOf(selected);
+    this.highlightAllInputs();
+  }
+
   findAndHighlightInputs() {
-    // Remove existing highlights
     document.querySelectorAll('.paste-typer-highlight').forEach(el => {
       el.classList.remove('paste-typer-highlight');
     });
-    
-    // Find all editable inputs using the same logic as findBestEditableElement
-    const selectors = [
-      'input[type="text"]',
-      'input[type="email"]', 
-      'input[type="password"]',
-      'input[type="search"]',
-      'input[type="url"]',
-      'input[type="tel"]',
-      'input:not([type])',
-      'textarea',
-      '[contenteditable="true"]',
-      '[contenteditable=""]',
-      'div[contenteditable]',
-      'p[contenteditable]',
-      'span[contenteditable]'
-    ];
-    
-    const inputs = document.querySelectorAll(selectors.join(', '));
+    const inputs = this._findNavigationTargets();
     let count = 0;
     
     // Add CSS for highlighting if not already added
@@ -1531,36 +1543,23 @@ class PasteTyper {
   }
 
   startInputNavigation() {
-    // Find all input fields
-    const selectors = [
-      'input[type="text"]',
-      'input[type="email"]', 
-      'input[type="password"]',
-      'input[type="search"]',
-      'input[type="url"]',
-      'input[type="tel"]',
-      'input:not([type])',
-      'textarea',
-      '[contenteditable="true"]',
-      '[contenteditable=""]',
-      'div[contenteditable]',
-      'p[contenteditable]',
-      'span[contenteditable]'
-    ];
-    
-    const inputs = document.querySelectorAll(selectors.join(', '));
-    this.availableInputs = Array.from(inputs).filter(input => {
-      const rect = input.getBoundingClientRect();
-      return targetTracker.isEditable(input) && rect.width > 0 && rect.height > 0;
-    });
-    
-    this.selectedInputIndex = 0;
-    this.navigationMode = true;
-    
-    this.addNavigationStyles();
-    this.highlightAllInputs();
-    this.highlightSelectedInput();
-    
+    const target = targetTracker.getTarget() || document.activeElement;
+    this.stopInputNavigation();
+    this.availableInputs = this._findNavigationTargets();
+    this.selectedInputIndex = this.availableInputs.indexOf(target);
+    if (this.selectedInputIndex < 0 && target?.isContentEditable) {
+      // Clicks on a rich-text paragraph can be tracked inside its editing host.
+      this.availableInputs.forEach((input, index) => {
+        if (input.isContentEditable && input.contains(target)) this.selectedInputIndex = index;
+      });
+    }
+    if (this.selectedInputIndex < 0 && this.availableInputs.length) this.selectedInputIndex = 0;
+    this.navigationMode = this.availableInputs.length > 0;
+    if (this.navigationMode) {
+      this.addNavigationStyles();
+      this.highlightAllInputs();
+      this.highlightSelectedInput();
+    }
     return this.availableInputs.length;
   }
 
@@ -1581,51 +1580,50 @@ class PasteTyper {
   }
 
   navigateToNext() {
-    if (this.availableInputs.length === 0) return;
-    
+    if (!this.navigationMode) return false;
+    this._refreshNavigationTargets();
+    if (!this.availableInputs.length) { this.stopInputNavigation(); return false; }
     this.selectedInputIndex = (this.selectedInputIndex + 1) % this.availableInputs.length;
     this.highlightSelectedInput();
+    return true;
   }
 
   navigateToPrevious() {
-    if (this.availableInputs.length === 0) return;
-    
-    this.selectedInputIndex = this.selectedInputIndex <= 0 
-      ? this.availableInputs.length - 1 
-      : this.selectedInputIndex - 1;
+    if (!this.navigationMode) return false;
+    this._refreshNavigationTargets();
+    if (!this.availableInputs.length) { this.stopInputNavigation(); return false; }
+    this.selectedInputIndex = this.selectedInputIndex <= 0
+      ? this.availableInputs.length - 1 : this.selectedInputIndex - 1;
     this.highlightSelectedInput();
+    return true;
   }
 
   selectCurrentInput() {
-    if (this.selectedInputIndex >= 0 && this.selectedInputIndex < this.availableInputs.length) {
-      const selectedInput = this.availableInputs[this.selectedInputIndex];
-      if (!targetTracker.isEditable(selectedInput)) return false;
-      
-      // Store as target element BEFORE stopping navigation
-      this.targetElement = selectedInput;
-      targetTracker.capture(selectedInput);
-      debug.log('Selected input element:', selectedInput);
-      
-      // Focus the element
-      selectedInput.focus();
-      
-      // Stop navigation mode
-      this.stopInputNavigation();
-      
-      // Scroll into view if needed
-      selectedInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      
-      // Add a temporary highlight to show selection
-      selectedInput.style.outline = '3px solid #4CAF50';
-      selectedInput.style.outlineOffset = '2px';
-      setTimeout(() => {
-        selectedInput.style.outline = '';
-        selectedInput.style.outlineOffset = '';
-      }, 2000);
-      
-      return true;
+    if (!this.navigationMode) return false;
+    this._refreshNavigationTargets();
+    const selectedInput = this.availableInputs[this.selectedInputIndex];
+    if (!selectedInput) {
+      this.highlightSelectedInput();
+      return false;
     }
-    return false;
+    selectedInput.focus();
+    // A page may remove, disable or redirect focus during its focus handler.
+    if (!this._isNavigationTarget(selectedInput) || document.activeElement !== selectedInput) {
+      this._refreshNavigationTargets();
+      this.highlightSelectedInput();
+      return false;
+    }
+    this.targetElement = selectedInput;
+    targetTracker.capture(selectedInput);
+    this.stopInputNavigation();
+    selectedInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    selectedInput.style.outline = '3px solid #4CAF50';
+    selectedInput.style.outlineOffset = '2px';
+    setTimeout(() => {
+      selectedInput.style.outline = '';
+      selectedInput.style.outlineOffset = '';
+    }, 2000);
+    return true;
   }
 
   addNavigationStyles() {
@@ -1683,8 +1681,8 @@ class PasteTyper {
       selectedInput.classList.add('paste-typer-input-selected');
       
       // Update or create navigation indicator
-      this.updateNavigationIndicator();
     }
+    this.updateNavigationIndicator();
   }
 
   updateNavigationIndicator() {
@@ -1699,6 +1697,10 @@ class PasteTyper {
     
     const current = this.selectedInputIndex + 1;
     const total = this.availableInputs.length;
+    if (this.selectedInputIndex < 0) {
+      indicator.textContent = 'The highlighted field is no longer available. Use Left/Right to choose another field or Esc to exit.';
+      return;
+    }
     indicator.textContent = `Input ${current}/${total}  ·  Left/Right arrows to navigate  ·  Enter to select  ·  Esc to exit`;
   }
 
