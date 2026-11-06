@@ -691,6 +691,9 @@ class PasteTyper {
     // below cannot find.
     const adapter = typeof adapterManager !== 'undefined' && adapterManager
       ? adapterManager.getAdapter() : null;
+    if (adapter instanceof GoogleDocsAdapter) {
+      throw new Error('Clear is unavailable in Google Docs/Slides. Select and delete text in the document to avoid clearing the wrong content.');
+    }
     if (targetTracker.element && !targetTracker.getTarget()) {
       throw new Error('The selected input is no longer editable. Click another input and try again.');
     }
@@ -794,6 +797,9 @@ class PasteTyper {
     if (remainingContent.length > 0) {
       debug.log('Backspace loop failed, trying direct clear...');
       await this.directClear(element);
+    }
+    if (this.getElementContent(element).length > 0) {
+      throw new Error('The page did not clear the selected field. Check the field and try again.');
     }
     
     debug.log('Deletion complete. Final content:', this.getElementContent(element));
@@ -1399,11 +1405,13 @@ class PasteTyper {
     
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       // Set selection to entire content
-      element.setSelectionRange(0, element.value.length);
+      if (typeof element.selectionStart === 'number') {
+        element.setSelectionRange(0, element.value.length);
+      }
       // Clear value via native setter (React/Vue safe)
       this._setNativeValue(element, '');
       // Set cursor to beginning
-      element.setSelectionRange(0, 0);
+      if (typeof element.selectionStart === 'number') element.setSelectionRange(0, 0);
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       // Select all content
       const selection = window.getSelection();

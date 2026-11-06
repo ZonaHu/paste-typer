@@ -121,6 +121,15 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#email').inputValue(), '');
     assert.equal(await page.locator('#email').getAttribute('data-model'), '');
     console.log('PASS Clear works in email input without selection API');
+    await page.locator('#email').evaluate(el => {
+      el.value = 'protected'; el.focus();
+      el.oninput = () => { el.value = 'protected'; };
+    });
+    const refusedClear = await route({ action: 'resetTyping' });
+    assert.equal(refusedClear.success, false);
+    assert.match(refusedClear.error, /did not clear/);
+    assert.equal(await page.locator('#email').inputValue(), 'protected');
+    console.log('PASS Clear reports failure when page restores field content');
     const navigation = await route({ action: 'startInputNavigation' });
     assert.equal(navigation.count, 7);
     await route({ action: 'stopInputNavigation' });
@@ -297,6 +306,10 @@ const server = http.createServer((req, res) => {
     await waitDone();
     assert.equal(await page.evaluate(() => window.ptCanvasKeys), 'A😀B');
     assert.equal((await route({ action: 'getTypingProgress' })).deliveryVerified, false);
+    const canvasClear = await route({ action: 'resetTyping' });
+    assert.equal(canvasClear.success, false);
+    assert.match(canvasClear.error, /Clear is unavailable in Google Docs\/Slides/);
+    assert.equal(await page.evaluate(() => window.ptCanvasKeys), 'A😀B');
     console.log('PASS canvas adapter sends complete graphemes and marks delivery unverified in fixture');
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });
