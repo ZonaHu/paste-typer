@@ -2,6 +2,7 @@
 // in unrelated inputs and allow multiple frames to race when answering.
 const PT_CONTENT_FILES = [
   'content/typoRate.js',
+  'content/graphemes.js',
   'content/inputAdapter.js', 'content/targetTracker.js',
   'content/googleDocsAdapter.js', 'content/standardInputAdapter.js',
   'content/monacoAdapter.js', 'content/adapterManager.js', 'floating-ui.js', 'content.js'
@@ -249,8 +250,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // popup cannot choose a tab, frame, or document through this message.
   if (!sender.tab || !sender.documentId || !/^https?:|^about:/.test(sender.url || '') ||
       typeof request.token !== 'string' || typeof request.text !== 'string' ||
-      request.text.length === 0 || request.text.length > 32 ||
-      [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(request.text)].length !== 1) return;
+      request.text.length === 0 || /[\uD800-\uDFFF]/u.test(request.text)) return;
+  // A grapheme can contain arbitrarily many combining marks. Check its actual
+  // boundary instead of imposing a code-unit limit or splitting emoji sequences.
+  const parts = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    .segment(request.text)[Symbol.iterator]();
+  parts.next();
+  if (!parts.next().done) return;
   chrome.scripting.executeScript({
     target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
     world: 'MAIN', func: simulateMonacoInput, args: [request.token, request.text]
