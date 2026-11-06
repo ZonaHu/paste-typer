@@ -83,6 +83,15 @@ enters through keyboard/text-input events, not clipboard paste or direct model
 edits. Newer Monaco configurations using EditContext rather than a textarea
 are not supported yet. Chrome 106 or newer is required.
 
+**ProseMirror editors** — the selected `.ProseMirror` surface uses browser text
+input and the editor's normal transaction/history pipeline. Existing content and
+marks outside the selection are preserved. Newlines follow the editor's Enter
+binding; literal tabs require a code block because ordinary paragraphs normalize
+them to spaces. A rejected or transformed character stops typing. This adapter
+checks ProseMirror's internal DOM document description without modifying it; if
+that description is unavailable, it refuses input. Notion's body editor has not
+been verified and is not inferred to use ProseMirror from its site name.
+
 ## Supported fields
 
 | Field type | Supported |
@@ -92,6 +101,7 @@ are not supported yet. Chrome 106 or newer is required.
 | `contenteditable` | ✅ |
 | Google Docs / Slides canvas | ✅ |
 | Monaco textarea-based editor (including permitted iframes) | ✅ |
+| ProseMirror with its DOM document description (including permitted iframes) | ✅ |
 
 ## How it works
 
@@ -106,6 +116,7 @@ content/
   standardInputAdapter.js  <input> / <textarea> / contenteditable
   googleDocsAdapter.js     Google Docs & Slides canvas editor
   monacoAdapter.js         Monaco keyboard/text input with temporary option suppression
+  proseMirrorAdapter.js    ProseMirror browser input with model acceptance checks
   targetTracker.js         remembers the selected field and native selection
   adapterManager.js        picks the adapter for the page
 frameRouter.js             selects and addresses a single permitted frame

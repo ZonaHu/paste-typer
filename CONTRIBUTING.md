@@ -83,6 +83,32 @@ extension copy, while permission denial is covered by the Node tests. The popup
 is represented by an extension-page tab whose tab query is pinned to the fixture.
 No test dependencies are needed to run or build the extension itself.
 
+For ProseMirror changes, run its real-editor harness with test-only packages in
+a temporary directory outside the repository:
+
+```bash
+npm install --prefix /path/to/test-deps --no-save --package-lock=false playwright@1.56.1 prosemirror-view@1.41.3 prosemirror-state@1.4.4 prosemirror-model@1.25.4 prosemirror-schema-basic@1.2.4 prosemirror-history@1.4.1 prosemirror-commands@1.7.1 prosemirror-keymap@1.2.3 esbuild@0.25.12
+PT_TEST_DEPS=/path/to/test-deps node tests/prosemirror.integration.cjs
+```
+
+The harness creates a disposable extension copy, Chrome profile and cross-origin
+fixture. It checks real model transactions after each character, paragraph and
+code-block newlines, marks, native text-input events, Undo/Redo, selected ranges,
+popup/floating controls, Clear, rejected input, detached/read-only editors and
+unrelated nodes/editors. A complete-grapheme adapter call is tested independently
+of the typing engine's Unicode iteration. The adapter relies on the read-only
+internal `pmViewDesc.node`/position mapping; verify compatibility when upgrading
+ProseMirror. Native browser editing, rather than a guessed `EditorView` expando,
+feeds the editor's own input hooks and filters. See the upstream
+[DOM description](https://github.com/ProseMirror/prosemirror-view/blob/master/src/viewdesc.ts),
+[DOM observer](https://github.com/ProseMirror/prosemirror-view/blob/master/src/domobserver.ts)
+and [input handling](https://github.com/ProseMirror/prosemirror-view/blob/master/src/input.ts).
+
+A local ProseMirror fixture is not a live Notion acceptance test. Before claiming
+Notion support, verify its current body editor in an authenticated disposable
+page, including persistence after redraw/reload and Undo. Do not detect Notion by
+hostname or assume all contenteditables expose ProseMirror internals.
+
 Floating UI controls run in the content script's isolated world. Changes to them
 must preserve the trusted-event checks: page scripts must not start/stop typing
 or access extension settings through window messages or synthetic DOM events.

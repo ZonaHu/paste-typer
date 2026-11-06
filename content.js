@@ -721,7 +721,7 @@ class PasteTyper {
       const isMonacoEditor = this.isMonacoEditor(elementToClear);
       debug.log('Is Monaco editor:', isMonacoEditor);
       
-      if (adapter instanceof MonacoAdapter) {
+      if (typeof adapter?.reset === 'function') {
         await adapter.reset(elementToClear);
       } else {
         // Focus the element first and ensure it's ready

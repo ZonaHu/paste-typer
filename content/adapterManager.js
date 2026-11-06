@@ -25,6 +25,7 @@ class AdapterManager {
 
   getAdapter(element = targetTracker.getTarget() || document.activeElement) {
     if (MonacoAdapter.detect(element)) return new MonacoAdapter();
+    if (ProseMirrorAdapter.detect(element)) return new ProseMirrorAdapter();
     debug.log('[AdapterManager] Checking adapters...');
     for (const AdapterClass of this.adapters) {
       const adapterName = AdapterClass.name;
