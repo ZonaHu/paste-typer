@@ -16,7 +16,7 @@ function engine() {
     chrome: { runtime: { onMessage: { addListener(fn) { listeners.push(fn); } } },
       storage: { local: { get(_, callback) { callback({}); } } } },
     adapterManager: { getAdapter: () => adapter } });
-  for (const file of ['content/graphemes.js', 'content.js']) {
+  for (const file of ['content/typoRate.js', 'content/graphemes.js', 'content/inputAdapter.js', 'content/googleDocsAdapter.js', 'content.js']) {
     if (fs.existsSync(path.join(root, file))) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context);
   }
   const typer = vm.runInContext('pasteTyper', context);
