@@ -90,8 +90,16 @@ are not supported yet. Chrome 106 or newer is required.
 | `<input>` (text, email, password, search, url, tel) | ✅ |
 | `<textarea>` | ✅ |
 | `contenteditable` | ✅ |
-| Google Docs / Slides canvas | ✅ |
+| Google Docs / Slides canvas | Keystrokes sent; check the document |
 | Monaco textarea-based editor (including permitted iframes) | ✅ |
+
+Ordinary inputs, contenteditable fields, and supported Monaco editors verify the
+observed text after each simulated input, including immediate event-handler
+responses. A detected change or rejection stops typing and retains the source
+and failure position. Later page changes cannot be verified by this check.
+Google Docs and Slides do not expose accepted canvas text safely, so their
+completion message asks you to check the document. No automatic retry rewrites
+your field.
 
 ## How it works
 

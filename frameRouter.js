@@ -171,7 +171,7 @@ const frameRouter = new FrameRouter();
 // Runs in the selected frame's MAIN world: content scripts cannot access the
 // page's Monaco instances. Never search other frames or fall back to another
 // editor when the selected input disappears.
-function simulateMonacoInput(token, text) {
+async function simulateMonacoInput(token, text) {
   const element = Array.from(document.querySelectorAll('textarea.inputarea'))
     .find(candidate => candidate.getAttribute('data-paste-typer-target') === token);
   const root = element?.closest('.monaco-editor');
@@ -186,6 +186,12 @@ function simulateMonacoInput(token, text) {
     return { success: false, error: 'The selected Monaco editor is not editable.' };
   }
   const option = name => editor.getOption(api.editor.EditorOption[name]);
+  const selection = editor.getSelection();
+  const before = model.getValue();
+  const start = model.getOffsetAt(selection.getStartPosition());
+  const end = model.getOffsetAt(selection.getEndPosition());
+  const inserted = text.replace(/\r\n|\r|\n/g, model.getEOL());
+  const expected = before.slice(0, start) + inserted + before.slice(end);
   const saved = {
     autoIndent: ['none', 'keep', 'brackets', 'advanced', 'full'][option('autoIndent')],
     autoClosingBrackets: option('autoClosingBrackets'),
@@ -212,18 +218,25 @@ function simulateMonacoInput(token, text) {
     const accepted = element.dispatchEvent(keyboard('keydown'));
     // Monaco handles Enter in keydown. Printable characters (and literal tabs)
     // need the text-input stage that untrusted KeyboardEvents cannot generate.
-    if (accepted) {
+    if (model.getVersionId() !== versionBeforeKey) {
+      if (model.getValue() !== expected) {
+        return { success: false, error: 'The Monaco editor changed or rejected the typed text.' };
+      }
+    } else if (accepted) {
       element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
       element.dispatchEvent(new InputEvent('input', { data: text,
         inputType: 'insertText', bubbles: true }));
-    } else if (text !== '\n' || model.getVersionId() === versionBeforeKey) {
+    } else {
       return { success: false, error: 'The editor intercepted the simulated key.' };
     }
     element.dispatchEvent(keyboard('keyup'));
-    return { success: true };
   } finally {
     editor.updateOptions(saved);
   }
+  await Promise.resolve();
+  return element.isConnected && model.getValue() === expected
+    ? { success: true }
+    : { success: false, error: 'The Monaco editor changed or rejected the typed text.' };
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

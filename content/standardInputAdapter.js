@@ -70,87 +70,74 @@ class StandardInputAdapter extends InputAdapter {
    * 在标准元素中输入单个字符
    */
   async typeCharacter(element, char) {
-    if (!element) {
-      return { success: false, error: '目标元素无效' };
+    if (!this._isEditableElement(element)) {
+      return { success: false, error: 'The selected input is no longer editable. Click another input and try again.' };
     }
 
-    const keyInfo = this._getKeyInfo(char);
-
-    const keydownEvent = new KeyboardEvent('keydown', {
-      key: char,
-      code: keyInfo.code,
-      keyCode: keyInfo.keyCode,
-      which: keyInfo.keyCode,
-      bubbles: true,
-      cancelable: true
-    });
-
-    const keypressEvent = new KeyboardEvent('keypress', {
-      key: char,
-      code: keyInfo.code,
-      keyCode: keyInfo.charCode,
-      which: keyInfo.charCode,
-      bubbles: true,
-      cancelable: true
-    });
-
-    const inputEvent = new InputEvent('input', {
-      data: char,
-      inputType: 'insertText',
-      bubbles: true,
-      cancelable: true
-    });
-
-    const keyupEvent = new KeyboardEvent('keyup', {
-      key: char,
-      code: keyInfo.code,
-      keyCode: keyInfo.keyCode,
-      which: keyInfo.keyCode,
-      bubbles: true,
-      cancelable: true
-    });
-
-    element.dispatchEvent(keydownEvent);
-    element.dispatchEvent(keypressEvent);
-
-    // 实际插入字符
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
-      const value = element.value;
-      this._setNativeValue(element, value.substring(0, start) + char + value.substring(end));
-      element.selectionStart = element.selectionEnd = start + 1;
-    } else if (element.contentEditable === 'true' || element.isContentEditable) {
-      const selection = window.getSelection();
-      
-      if (selection.rangeCount === 0 ||
-          !element.contains(selection.getRangeAt(0).startContainer) ||
-          !element.contains(selection.getRangeAt(0).endContainer)) {
-        const range = document.createRange();
+    const nativeField = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+    const previousValue = nativeField ? element.value : element.textContent;
+    const selection = nativeField ? null : window.getSelection();
+    const hasSelection = nativeField && typeof element.selectionStart === 'number';
+    let start = hasSelection ? element.selectionStart : previousValue.length;
+    let end = hasSelection ? element.selectionEnd : start;
+    let range;
+    if (!nativeField) {
+      range = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : document.createRange();
+      if (!selection.rangeCount || !element.contains(range.startContainer) || !element.contains(range.endContainer)) {
         range.selectNodeContents(element);
         range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
       }
-
-      try {
-        const range = selection.getRangeAt(0);
-        range.deleteContents();
-        const textNode = document.createTextNode(char);
-        range.insertNode(textNode);
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      } catch (e) {
-        document.execCommand('insertText', false, char);
+      // Capture text offsets before page key handlers can mutate the document.
+      const prefix = document.createRange();
+      prefix.selectNodeContents(element);
+      prefix.setEnd(range.startContainer, range.startOffset);
+      start = prefix.toString().length;
+      prefix.setEnd(range.endContainer, range.endOffset);
+      end = prefix.toString().length;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    const expectedValue = previousValue.substring(0, start) + char + previousValue.substring(end);
+    const mismatch = () => ({ success: false,
+      error: 'The page changed or rejected the typed text. Check the input and try again.' });
+    const readValue = () => nativeField ? element.value : element.textContent;
+    const keyInfo = this._getKeyInfo(char);
+    const keyboard = (type, code) => new KeyboardEvent(type, {
+      key: char, code: keyInfo.code, keyCode: code, which: code,
+      bubbles: true, cancelable: true
+    });
+    const keydownAccepted = element.dispatchEvent(keyboard('keydown', keyInfo.keyCode));
+    const keypressAccepted = element.dispatchEvent(keyboard('keypress', keyInfo.charCode));
+    if (!this._isEditableElement(element)) return mismatch();
+    const afterKeys = readValue();
+    if (afterKeys !== previousValue && afterKeys !== expectedValue) return mismatch();
+    if (afterKeys === previousValue) {
+      if (!keydownAccepted || !keypressAccepted) return mismatch();
+      if (nativeField) {
+        this._setNativeValue(element, expectedValue);
+        if (hasSelection) element.selectionStart = element.selectionEnd = start + 1;
+      } else {
+        try {
+          range.deleteContents();
+          const textNode = document.createTextNode(char);
+          range.insertNode(textNode);
+          range.setStartAfter(textNode);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        } catch {
+          document.execCommand('insertText', false, char);
+        }
       }
     }
-
-    element.dispatchEvent(inputEvent);
-    element.dispatchEvent(keyupEvent);
-
-    return { success: true };
+    // A page may handle the key itself. Its accepted insertion must not be doubled.
+    element.dispatchEvent(new InputEvent('input', {
+      data: char, inputType: 'insertText', bubbles: true, cancelable: true
+    }));
+    element.dispatchEvent(keyboard('keyup', keyInfo.keyCode));
+    // Framework handlers can apply their response in the event's microtask queue.
+    await Promise.resolve();
+    return this._isEditableElement(element) && readValue() === expectedValue ? { success: true } : mismatch();
   }
 
   /**

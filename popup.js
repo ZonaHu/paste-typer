@@ -237,7 +237,10 @@ class PopupController {
           if (!isTyping) {
             this.stopProgressTracking();
             this._setControls(false);
-            this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
+            const unverified = response.deliveryVerified === false;
+            this.showStatus(response.error || (unverified
+              ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete'),
+            response.error ? 'error' : unverified ? 'info' : 'success');
             return;
           }
           

@@ -19,6 +19,8 @@ class FloatingUIController {
     this.closeBtn = root.getElementById('closeBtn');
     this.header = root.getElementById('header');
     this.status = root.getElementById('status');
+    this.progressInterval = null;
+    this.statusTimeout = null;
 
     this.setupEventListeners();
     this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
@@ -96,6 +98,7 @@ class FloatingUIController {
 
     if (response && response.success) {
       this.showStatus('Typing started!', 'success');
+      this.startProgressTracking();
     } else {
       this.showStatus('Failed to start typing' + (response && response.error ? ': ' + response.error : ''), 'error');
     }
@@ -105,6 +108,7 @@ class FloatingUIController {
     if (event?.isTrusted !== true) return;
     const response = await this.sendCommand({ action: 'stopTyping' });
     if (response && response.success) {
+      this.stopProgressTracking();
       this.showStatus('Stopped', 'info');
     } else {
       this.showStatus('Error stopping' + (response && response.error ? ': ' + response.error : ''), 'error');
@@ -114,6 +118,31 @@ class FloatingUIController {
   close(event) {
     if (event?.isTrusted !== true) return;
     this.container.style.display = 'none';
+    this.stopProgressTracking();
+  }
+
+  startProgressTracking() {
+    this.stopProgressTracking();
+    const interval = setInterval(async () => {
+      const response = await this.sendCommand({ action: 'getTypingProgress' });
+      if (this.progressInterval !== interval) return;
+      if (!response || response.success === false) {
+        this.stopProgressTracking();
+        this.showStatus(response?.error || 'Lost connection to typing session. Refresh this page.', 'error');
+      } else if (!response.isTyping) {
+        this.stopProgressTracking();
+        const unverified = response.deliveryVerified === false;
+        this.showStatus(response.error || (unverified
+          ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete'),
+        response.error ? 'error' : unverified ? 'info' : 'success');
+      }
+    }, 500);
+    this.progressInterval = interval;
+  }
+
+  stopProgressTracking() {
+    if (this.progressInterval) clearInterval(this.progressInterval);
+    this.progressInterval = null;
   }
 
   async sendCommand(message) {
@@ -127,11 +156,12 @@ class FloatingUIController {
   }
 
   showStatus(message, type) {
+    if (this.statusTimeout) clearTimeout(this.statusTimeout);
     this.status.textContent = message;
     this.status.className = `status ${type} show`;
 
     if (type === 'success' || type === 'info') {
-      setTimeout(() => {
+      this.statusTimeout = setTimeout(() => {
         this.status.classList.remove('show');
       }, 3000);
     }

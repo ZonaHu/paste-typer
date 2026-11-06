@@ -15,6 +15,7 @@ class PasteTyper {
     this.targetElement = null;
     this.currentAdapter = null; // 当前使用的适配器
     this.lastError = null;
+    this.deliveryVerified = true;
     this.typingSpeed = 50; // Base delay between characters in ms
     this.speedVariation = 20; // Random variation in typing speed
     this.pauseChance = 0.1; // Chance of pausing during typing
@@ -102,7 +103,8 @@ class PasteTyper {
           total: this.currentText.length,
           isTyping: this.isTyping,
           isPaused: this.isPaused,
-          error: this.lastError
+          error: this.lastError,
+          deliveryVerified: this.deliveryVerified
         });
       } else if (request.action === 'startInputNavigation') {
         this.startInputNavigation();
@@ -402,6 +404,7 @@ class PasteTyper {
         
         this.isTyping = true;
         this.lastError = null;
+        this.deliveryVerified = !(this.currentAdapter instanceof GoogleDocsAdapter);
         this.isPaused = false;
         this.currentText = text.replace(/\r\n?/g, '\n');
         this.currentPosition = 0;

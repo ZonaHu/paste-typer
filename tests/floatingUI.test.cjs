@@ -47,7 +47,7 @@ function setup() {
     } }
   };
   const context = vm.createContext({ chrome, window, document: { addEventListener() {} },
-    root, container, URL, Map, Set, console, setTimeout() {},
+    root, container, URL, Map, Set, console, setTimeout() {}, clearTimeout() {}, setInterval() { return 1; }, clearInterval() {},
     navigator: { clipboard: { async readText() { clipboardReads++; return 'clipboard text'; } } } });
   // Exercise the production controller, content-script initialization and router.
   for (const file of ['frameRouter.js', 'floating-ui.js', 'content.js']) {

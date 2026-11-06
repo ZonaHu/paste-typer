@@ -55,6 +55,17 @@ selection replacement, input notifications, popup/floating controls, and explici
 Clear. Context-menu coverage exercises its frame-routing contract, not the native
 menu or clipboard permission UI.
 
+Accepted-text verification has its own disposable Chrome fixture, including
+ordinary/rich-text rejection and transformation, page-handled keys, Monaco CRLF,
+and unverified canvas delivery:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/acceptance.integration.cjs
+```
+
+It uses the test-only Playwright/Monaco setup below. Repeat with both Monaco
+versions; `PT_MONACO_DEPS` may point to a separate Monaco installation.
+
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.
