@@ -408,8 +408,7 @@ class PasteTyper {
         this.deliveryVerified = !(this.currentAdapter instanceof GoogleDocsAdapter);
         this.isPaused = false;
         this.currentText = text.replace(/\r\n?/g, '\n');
-        this.currentGraphemes = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-          .segment(this.currentText)].map(part => part.segment);
+        this.currentGraphemes = PTGraphemes.split(this.currentText);
         this.currentPosition = 0;
         const sessionId = ++this.sessionId;
         this.targetElement = targetElement;
@@ -506,7 +505,7 @@ class PasteTyper {
       return false;
     }
     // Only make typos on letters and numbers
-    return /[a-zA-Z0-9]/.test(char);
+    return /^[a-zA-Z0-9]$/.test(char);
   }
 
   async makeTypoAndCorrect(correctChar, sessionId) {
@@ -893,56 +892,21 @@ class PasteTyper {
         break;
       }
       
-      // Simulate Backspace keydown
-      const backspaceDown = new KeyboardEvent('keydown', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceDown);
-      
-      // Actually remove one character
+      // Clear falls back to deleting whole graphemes from the end. Reuse the
+      // ordinary adapter so its UTF-16 and cross-node boundaries stay consistent.
       if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-        const currentValue = element.value;
-        if (currentValue.length > 0) {
-          this._setNativeValue(element, currentValue.slice(0, -1));
-          if (typeof element.selectionStart === 'number') {
-            element.setSelectionRange(element.value.length, element.value.length);
-          }
+        if (typeof element.selectionStart === 'number') {
+          element.setSelectionRange(element.value.length, element.value.length);
         }
       } else if (element.contentEditable === 'true' || element.isContentEditable) {
-        const currentText = element.textContent || '';
-        if (currentText.length > 0) {
-          element.textContent = currentText.slice(0, -1);
-          // Set cursor to end
-          const selection = window.getSelection();
-          const range = document.createRange();
-          if (element.childNodes.length > 0) {
-            range.setStartAfter(element.lastChild);
-          } else {
-            range.setStart(element, 0);
-          }
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
       }
-      
-      // Dispatch input event
-      const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-      element.dispatchEvent(inputEvent);
-      
-      // Simulate Backspace keyup
-      const backspaceUp = new KeyboardEvent('keyup', {
-        key: 'Backspace',
-        code: 'Backspace',
-        keyCode: 8,
-        bubbles: true,
-        cancelable: true
-      });
-      element.dispatchEvent(backspaceUp);
+      this.requireInput(await new StandardInputAdapter().simulateBackspace(element));
       
       // Small delay between backspaces (faster than typing)
       await this.sleep(10);

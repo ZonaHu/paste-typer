@@ -78,6 +78,20 @@ selection replacement, input notifications, popup/floating controls, and explici
 Clear. Context-menu coverage exercises its frame-routing contract, not the native
 menu or clipboard permission UI.
 
+Unicode regressions cover full grapheme input payloads and progress, pause/resume,
+UTF-16 carets, and Backspace across native fields and split rich-text nodes:
+
+```bash
+node --test tests/unicode.test.cjs
+PT_TEST_DEPS=/path/to/test-deps node tests/unicode.integration.cjs
+```
+
+The browser check also exercises Unicode input in a cross-origin Monaco editor.
+Repeat it with Monaco 0.45 and 0.57 using the test-only setup below; point
+`PT_MONACO_DEPS` at a separate dependency directory to switch Monaco versions.
+Google Docs/Slides event construction has Node coverage only; this check does
+not verify delivery into those canvas editors.
+
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.
