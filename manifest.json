@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "106",
   "name": "Paste Typer",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Types clipboard text character-by-character into web forms. Useful for fields that don't accept paste and for data-entry workflows.",
   "permissions": [
     "activeTab",
@@ -11,7 +11,10 @@
     "scripting",
     "clipboardRead"
   ],
-  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "commands": {
     "stop-typing": {
       "suggested_key": {
