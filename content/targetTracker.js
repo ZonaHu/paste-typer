@@ -23,6 +23,15 @@ class TargetTracker {
     return element.isContentEditable;
   }
 
+  getEditableRect(element) {
+    // Native Monaco can expose a zero-width caret surface. Its visible owner
+    // supplies geometry, while editability still belongs to the actual input.
+    const native = element.classList?.contains('native-edit-context') &&
+      typeof EditContext === 'function' && element.editContext instanceof EditContext;
+    const owner = native && element.closest('.monaco-editor');
+    return (owner || element).getBoundingClientRect();
+  }
+
   capture(element) {
     if (!this.isEditable(element)) return;
     this.element = element;

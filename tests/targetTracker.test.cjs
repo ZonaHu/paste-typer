@@ -56,3 +56,13 @@ test('a native-editor class without an actual EditContext is not an editable tar
   tracker.capture(impostor);
   assert.equal(tracker.getTarget(), null);
 });
+
+test('native caret geometry uses its visible editor owner, ordinary fields keep their own bounds', () => {
+  const tracker = setup();
+  const owner = { getBoundingClientRect: () => ({ width: 500, height: 200 }) };
+  const input = { classList: { contains: () => true }, editContext: new FixtureEditContext(),
+    closest: () => owner, getBoundingClientRect: () => ({ width: 0, height: 18 }) };
+  assert.deepEqual(tracker.getEditableRect(input), { width: 500, height: 200 });
+  input.editContext = null;
+  assert.deepEqual(tracker.getEditableRect(input), { width: 0, height: 18 });
+});

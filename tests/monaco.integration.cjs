@@ -59,6 +59,19 @@ const server = http.createServer((req,res)=>{
   }
   await prepare();
   assert.equal((await route({action:'getActiveElement'})).isEditable,true);
+  if(nativeEditContext){
+    await route({action:'startInputNavigation'});
+    const nativeTargets=await worker.evaluate(async tabId=>{
+      const results=await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>
+        typeof pasteTyper==='undefined'?[]:pasteTyper.availableInputs
+          .filter(input=>input.classList.contains('native-edit-context'))
+          .map(input=>input.closest('#one, #two')?.id)});
+      return results.flatMap(result=>result.result);
+    },tabId);
+    assert.deepEqual(nativeTargets,['one','two']);
+    await route({action:'stopInputNavigation'});
+    console.log('PASS Navigate discovers both native Monaco input surfaces');
+  }
   await worker.evaluate(()=>{
     globalThis.testRoutedCommands=[];
     const original=frameRouter.route.bind(frameRouter);
