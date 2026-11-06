@@ -23,6 +23,7 @@ test('context-menu typing uses the saved typo percentage, including zero', async
     importScripts() {}, frameRouter: { async route(tabId, message, frameId) {
       routed.push({ tabId, message, frameId });
     } } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../content/typoRate.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../background.js'), 'utf8'), context);
   for (const rate of [0, 5, 10]) {
     savedRate = String(rate);

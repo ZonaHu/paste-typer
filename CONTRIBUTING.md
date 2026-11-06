@@ -56,6 +56,15 @@ Set `PT_WEB_STORE_CHECK=1` to include a live Chrome Web Store restriction check
 why. The test extension grants that host only in its temporary copy, so missing
 host access cannot masquerade as the Web Store restriction. The Node suite also
 checks translation of Chrome's gallery error without network access.
+The typo-rate regression also checks real popup/floating labels, saved percent
+values and helper repair in a disposable Chrome profile:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/typoRate.integration.cjs
+```
+
+Use the test-only Playwright setup below. Node tests check deterministic 0%, 5%
+and 10% probability boundaries for both controls and the context menu.
 
 For ordinary-field insertion changes, run `tests/standardInput.integration.cjs`
 with the same test-only Playwright setup described below:

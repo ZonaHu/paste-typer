@@ -58,8 +58,7 @@ class PopupController {
 
     if (this.typoChanceSlider) {
       this.typoChanceSlider.addEventListener('input', () => {
-        const value = parseInt(this.typoChanceSlider.value);
-        this.typoChanceValue.textContent = `${value}%`;
+        this.typoChanceValue.textContent = PTTypoRate.formatPercent(this.typoChanceSlider.value);
         this.saveSettings();
       });
     }
@@ -147,7 +146,7 @@ class PopupController {
       this.startButton.disabled = true;
       
       // Get current settings
-      const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.05;
+      const typoChance = PTTypoRate.toProbability(this.typoChanceSlider?.value);
       const speed = parseInt(this.speedSlider.value);
 
       const response = await this.sendMessageToTab({
@@ -544,7 +543,7 @@ class PopupController {
     const settings = {
       text: this.textInput.value,
       speed: this.speedSlider.value,
-      typoChance: this.typoChanceSlider ? this.typoChanceSlider.value : 5
+      typoChance: String(PTTypoRate.normalizePercent(this.typoChanceSlider?.value))
     };
     
     chrome.storage.local.set({ pasteTyperSettings: settings });
@@ -565,18 +564,13 @@ class PopupController {
         }
         
         if (this.typoChanceSlider) {
-          if (settings.typoChance !== undefined) {
-            this.typoChanceSlider.value = settings.typoChance;
-            this.typoChanceValue.textContent = `${parseInt(settings.typoChance)}%`;
-          } else {
-            this.typoChanceSlider.value = 5;
-            this.typoChanceValue.textContent = '5%';
-          }
+          this.typoChanceSlider.value = PTTypoRate.normalizePercent(settings.typoChance);
+          this.typoChanceValue.textContent = PTTypoRate.formatPercent(settings.typoChance);
         }
       } else {
         if (this.typoChanceSlider) {
-          this.typoChanceSlider.value = 5;
-          this.typoChanceValue.textContent = '5%';
+          this.typoChanceSlider.value = PTTypoRate.normalizePercent();
+          this.typoChanceValue.textContent = PTTypoRate.formatPercent();
         }
       }
     });
