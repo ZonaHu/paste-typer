@@ -598,11 +598,11 @@ class PasteTyper {
       'span[contenteditable]'
     ];
     
-    const inputs = document.querySelectorAll(selectors.join(', '));
+    const inputs = Array.from(document.querySelectorAll(selectors.join(', '))).filter(input => this.isEditableElement(input));
     
     if (inputs.length === 0) {
       // Last resort: look for any element with contenteditable
-      const editables = document.querySelectorAll('[contenteditable]');
+      const editables = Array.from(document.querySelectorAll('[contenteditable]')).filter(input => this.isEditableElement(input));
       if (editables.length > 0) {
         return [...editables].find(element => targetTracker.isEditable(element) &&
           element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0) || null;

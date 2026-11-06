@@ -13,12 +13,20 @@ class TargetTracker {
   }
 
   isEditable(element) {
-    if (!element || !element.isConnected || element.closest('#paste-typer-floating-ui')) return false;
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      return !element.disabled && !element.readOnly &&
-        ['text', 'email', 'password', 'search', 'url', 'tel', 'textarea', ''].includes(element.type);
+    if (!element || !element.isConnected || element.closest('#paste-typer-floating-ui') ||
+        element.closest('[inert]') || element.matches(':disabled')) return false;
+    const native = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+    if (native ? element.readOnly || !['text', 'email', 'password', 'search', 'url', 'tel', 'textarea', ''].includes(element.type)
+        : !element.isContentEditable) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = getComputedStyle(element);
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    for (let current = element; current; current = current.parentElement) {
+      const computed = getComputedStyle(current);
+      if (computed.display === 'none' || computed.contentVisibility === 'hidden' || Number(computed.opacity) === 0) return false;
     }
-    return element.isContentEditable;
+    return true;
   }
 
   capture(element) {

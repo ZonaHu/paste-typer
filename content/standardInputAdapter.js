@@ -318,7 +318,7 @@ class StandardInputAdapter extends InputAdapter {
 
     const editables = document.querySelectorAll('[contenteditable="true"]');
     for (const editable of editables) {
-      if (editable !== document.body && editable.offsetWidth > 0 && editable.offsetHeight > 0) {
+      if (editable !== document.body && this._isEditableElement(editable)) {
         return editable;
       }
     }
