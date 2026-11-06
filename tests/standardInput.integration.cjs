@@ -132,6 +132,50 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#textarea').inputValue(), '');
     assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
     console.log('PASS explicit Clear still clears selected field');
+    const backspace = field => worker.evaluate(async ({ tabId, field }) => {
+      const [injected] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] },
+        world: 'ISOLATED', func: async field => new StandardInputAdapter()
+          .simulateBackspace(document.getElementById(field)), args: [field] });
+      return injected.result;
+    }, { tabId, field });
+    for (const field of ['input', 'textarea', 'rich']) {
+      for (const start of [1, 3]) {
+        await page.evaluate(({ field, start }) => {
+          const el = document.getElementById(field); el.focus(); el.oninput = null; el.onkeyup = null;
+          if (el.isContentEditable) {
+            el.textContent = 'abc';
+            const range = document.createRange();
+            range.setStart(el.firstChild, start); range.setEnd(el.firstChild, 3);
+            getSelection().removeAllRanges(); getSelection().addRange(range);
+          } else { el.value = 'abc'; el.setSelectionRange(start, 3); }
+        }, { field, start });
+        assert.equal((await backspace(field)).success, true);
+        assert.equal(await page.locator(`#${field}`).evaluate(el => el.value ?? el.textContent), start === 1 ? 'a' : 'ab');
+      }
+      console.log(`PASS ${field}: accepted caret and selected-range backspace`);
+      for (const event of ['input', 'keyup']) {
+        for (const defer of [false, true]) {
+          await page.evaluate(({ field, event, defer }) => {
+            const el = document.getElementById(field); el.focus();
+            if (el.isContentEditable) {
+              el.textContent = 'abc';
+              const range = document.createRange(); range.selectNodeContents(el); range.collapse(false);
+              getSelection().removeAllRanges(); getSelection().addRange(range);
+            } else { el.value = 'abc'; el.setSelectionRange(3, 3); }
+            el.oninput = null; el.onkeyup = null;
+            el['on' + event] = () => {
+              const restore = () => { if (el.isContentEditable) el.textContent = 'abc'; else el.value = 'abc'; };
+              if (defer) queueMicrotask(restore); else restore();
+            };
+          }, { field, event, defer });
+          const result = await backspace(field);
+          assert.equal(result.success, false, `${field} ${event} deferred=${defer}: restored deletion must fail`);
+          assert.match(result.error, /changed or rejected/);
+          assert.equal(await page.locator(`#${field}`).evaluate(el => el.value ?? el.textContent), 'abc');
+        }
+      }
+      console.log(`PASS ${field}: restored backspace rejected after input/keyup handlers and microtasks`);
+    }
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });
   }

@@ -150,15 +150,18 @@ class StandardInputAdapter extends InputAdapter {
 
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const currentValue = element.value;
+      let expected = currentValue;
       if (currentValue.length > 0) {
         const start = element.selectionStart;
         const end = element.selectionEnd;
         
         if (start === end && start > 0) {
-          this._setNativeValue(element, currentValue.substring(0, start - 1) + currentValue.substring(start));
+          expected = currentValue.substring(0, start - 1) + currentValue.substring(start);
+          this._setNativeValue(element, expected);
           element.selectionStart = element.selectionEnd = start - 1;
         } else if (start !== end) {
-          this._setNativeValue(element, currentValue.substring(0, start) + currentValue.substring(end));
+          expected = currentValue.substring(0, start) + currentValue.substring(end);
+          this._setNativeValue(element, expected);
           element.selectionStart = element.selectionEnd = start;
         }
       }
@@ -189,19 +192,32 @@ class StandardInputAdapter extends InputAdapter {
       element.dispatchEvent(backspaceUp);
       
       await this._sleep(10);
+      await Promise.resolve();
+      if (!element.isConnected || element.value !== expected) {
+        return { success: false, error: 'The page changed or rejected backspace. Typing stopped.' };
+      }
       return { success: true };
     }
     
     if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
+      const currentValue = element.textContent;
+      let expected = currentValue;
       
       if (selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
         
-        if (!range.collapsed) {
-          range.deleteContents();
-        } else if (range.startOffset > 0) {
+        if (range.collapsed && range.startOffset > 0) {
           range.setStart(range.startContainer, range.startOffset - 1);
+        }
+        if (!range.collapsed) {
+          const prefix = document.createRange();
+          prefix.selectNodeContents(element);
+          prefix.setEnd(range.startContainer, range.startOffset);
+          const start = prefix.toString().length;
+          prefix.setEnd(range.endContainer, range.endOffset);
+          const end = prefix.toString().length;
+          expected = currentValue.substring(0, start) + currentValue.substring(end);
           range.deleteContents();
         }
         
@@ -236,6 +252,10 @@ class StandardInputAdapter extends InputAdapter {
       element.dispatchEvent(backspaceUp);
       
       await this._sleep(10);
+      await Promise.resolve();
+      if (!element.isConnected || element.textContent !== expected) {
+        return { success: false, error: 'The page changed or rejected backspace. Typing stopped.' };
+      }
       return { success: true };
     }
     
