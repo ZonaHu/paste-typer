@@ -83,6 +83,18 @@ extension copy, while permission denial is covered by the Node tests. The popup
 is represented by an extension-page tab whose tab query is pinned to the fixture.
 No test dependencies are needed to run or build the extension itself.
 
+For hidden-tab or minimized-window changes, run the headful background harness:
+
+```bash
+PT_BACKGROUND_REPORT=/tmp/paste-typer-background.json node tests/background.integration.cjs
+```
+
+It requires Node 22+ and recent Chrome, uses direct CDP without forced focus or
+disabled timer throttling, and opens only disposable local fixtures. See
+[the background investigation](docs/background-compatibility.md) for the exact
+scope, recorded matrix, and required live Google Docs checks. Local event-sink
+results do not establish Google Docs compatibility.
+
 Floating UI controls run in the content script's isolated world. Changes to them
 must preserve the trusted-event checks: page scripts must not start/stop typing
 or access extension settings through window messages or synthetic DOM events.

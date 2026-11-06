@@ -71,6 +71,11 @@ of the field. **Clear entire field** explicitly deletes all content in the selec
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 
+Keep the target tab visible and Chrome open while typing. Background tabs and
+minimized windows can slow down or suspend typing; Google Docs background
+compatibility is still under investigation. See the
+[measurements and live-test runbook](docs/background-compatibility.md).
+
 **Embedded editors** — if the editor is hosted on another site, choose its site under
 "Allow access to an embedded editor's site" in the popup and click "Allow selected
 site". Only that site is requested; you can revoke access in Chrome's extension
