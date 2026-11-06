@@ -294,9 +294,14 @@ const server = http.createServer((req, res) => {
     assert.equal(cleared.success, true);
     assert.equal((await read())[0].text, '');
     assert.equal((await read())[1].text, 'SECOND');
+    const emptyDocument = (await read())[0].doc;
+    const commandsAfterClear = await editor.evaluate(() => commandCalls);
+    assert.equal((await route({ action: 'resetTyping' })).success, true);
+    assert.deepEqual((await read())[0].doc, emptyDocument);
+    assert.equal(await editor.evaluate(() => commandCalls), commandsAfterClear);
     assert.equal(await editor.evaluate(() => undo()), true);
     assert.deepEqual((await read())[0].doc, clearBefore);
-    console.log('PASS explicit Clear uses browser deletion and remains undoable');
+    console.log('PASS explicit Clear is undoable and repeated empty Clear succeeds without another edit');
 
     for (const option of ['rejectText', 'rejectKey', 'rejectPress', 'reject', 'cancelBeforeInput', 'redirectBeforeInput']) {
       await setup();

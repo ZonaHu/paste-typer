@@ -265,6 +265,11 @@ async function simulateProseMirrorInput(token, text, operation) {
   const to = description.posFromDOM(selection.focusNode, selection.focusOffset, 1);
   const start = Math.min(from, to), end = Math.max(from, to);
   if (start < 0 || end > before.content.size) return unavailable();
+  // An already empty editor needs no edit or new undo entry for explicit Clear.
+  // Leaf placeholders keep non-text content (for example an image) non-empty.
+  if (operation === 'clear' && before.textBetween(0, before.content.size, '\n', '\ufffc') === '') {
+    return { success: true };
+  }
   // ProseMirror's normal-whitespace parser converts tabs to spaces. Refuse
   // before editing rather than silently changing the user's source text.
   if (operation === 'type' && text === '\t' && before.resolve(start).parent.type.whitespace !== 'pre') {
