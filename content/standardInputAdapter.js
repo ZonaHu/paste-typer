@@ -278,17 +278,7 @@ class StandardInputAdapter extends InputAdapter {
    * 检查元素是否可编辑
    */
   _isEditableElement(element) {
-    if (!element || !element.isConnected || element.closest('#paste-typer-floating-ui')) return false;
-
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      return element.type !== 'hidden' && !element.disabled && !element.readOnly;
-    }
-
-    if (element.contentEditable === 'true' || element.isContentEditable) {
-      return true;
-    }
-
-    return false;
+    return targetTracker.isEditable(element);
   }
 
   /**
@@ -304,7 +294,7 @@ class StandardInputAdapter extends InputAdapter {
 
     const editables = document.querySelectorAll('[contenteditable="true"]');
     for (const editable of editables) {
-      if (editable !== document.body && editable.offsetWidth > 0 && editable.offsetHeight > 0) {
+      if (editable !== document.body && this._isEditableElement(editable)) {
         return editable;
       }
     }

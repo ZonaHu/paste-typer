@@ -366,13 +366,7 @@ class PasteTyper {
 
 
   isEditableElement(element) {
-    const editableTags = ['INPUT', 'TEXTAREA'];
-    const editableTypes = ['text', 'email', 'password', 'search', 'url', 'tel'];
-    
-    return editableTags.includes(element.tagName) ||
-           (element.tagName === 'INPUT' && editableTypes.includes(element.type)) ||
-           element.contentEditable === 'true' ||
-           element.isContentEditable;
+    return targetTracker.isEditable(element);
   }
 
   async startTyping(text, useActiveElement = true) {
@@ -586,11 +580,11 @@ class PasteTyper {
       'span[contenteditable]'
     ];
     
-    const inputs = document.querySelectorAll(selectors.join(', '));
+    const inputs = Array.from(document.querySelectorAll(selectors.join(', '))).filter(input => this.isEditableElement(input));
     
     if (inputs.length === 0) {
       // Last resort: look for any element with contenteditable
-      const editables = document.querySelectorAll('[contenteditable]');
+      const editables = Array.from(document.querySelectorAll('[contenteditable]')).filter(input => this.isEditableElement(input));
       if (editables.length > 0) {
         return editables[0];
       }
