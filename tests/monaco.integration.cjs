@@ -40,7 +40,7 @@ const server = http.createServer((req,res)=>{
  const profile=path.join(scratch,'profile');
  let context;
  try{
-  context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chrome',ignoreDefaultArgs:['--disable-extensions'],args:['--enable-unsafe-extension-debugging']});
+  context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chrome',ignoreDefaultArgs:['--disable-extensions'],args:['--enable-unsafe-extension-debugging','--host-resolver-rules=MAP localhost 127.0.0.1']});
   const cdp=await context.browser().newBrowserCDPSession();
   const extensionInfo=await cdp.send('Extensions.loadUnpacked',{path:extension});
   const worker=context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', {timeout:5000});
@@ -69,7 +69,8 @@ const server = http.createServer((req,res)=>{
   await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','undo');});assert.equal((await read())[0],'abcdef');console.log('PASS undo');
   await editor.evaluate(()=>editors[1].setSelection({startLineNumber:1,startColumn:2,endLineNumber:1,endColumn:5}));
   await editor.locator('#two textarea.inputarea').focus();
-  const commandCount=()=>worker.evaluate(()=>testRoutedCommands.length);
+  // Progress reads are expected while the floating panel tracks a running job.
+  const commandCount=()=>worker.evaluate(()=>testRoutedCommands.filter(action=>action!=='getTypingProgress').length);
   const startCount=()=>worker.evaluate(()=>testRoutedCommands.filter(action=>action==='startTyping').length);
   const forgeMessages=()=>page.evaluate(()=>{
     for(const action of ['startTyping','stopTyping','loadSettings','saveSettings','floatingUIClosed']){
@@ -196,6 +197,14 @@ const server = http.createServer((req,res)=>{
   await route({action:'startTyping',text:'\nQ',speed:10,typoChance:0,targetElement:true});await waitDone();assert.equal((await read())[1],'S\nQselectionND');console.log('PASS newline');
   // Real native key handling for typo correction.
   await route({action:'startTyping',text:'abcdefghij',speed:10,typoChance:1,targetElement:true});await waitDone();assert.ok((await read())[1].includes('QabcdefghijselectionND'));console.log('PASS forced typo + backspace corrections');
+  for (const value of ['A😀B', 'e\u0301', '🇨🇦', '👨‍👩‍👧‍👦']) {
+    await editor.evaluate(()=>{editors[1].setValue('');editors[1].setPosition({lineNumber:1,column:1});editors[1].focus();});
+    await editor.locator('#two textarea.inputarea').focus();
+    await route({action:'startTyping',text:value,speed:10,typoChance:0,targetElement:true});
+    await waitDone();
+    assert.equal((await read())[1],value);
+  }
+  console.log('PASS Monaco accepts complete Unicode graphemes');
   await route({action:'resetTyping'});assert.equal((await read())[1],'');assert.equal((await read())[0],'abcdef');console.log('PASS explicit clear only selected Monaco');
   // Repeated discovery does not redeclare classes or duplicate UI listeners.
   await Promise.all([prepare(),prepare(),prepare()]);console.log('PASS concurrent/repeated injection');

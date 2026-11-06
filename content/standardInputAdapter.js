@@ -70,11 +70,18 @@ class StandardInputAdapter extends InputAdapter {
    * 在标准元素中输入单个字符
    */
   async typeCharacter(element, char) {
-    if (!element) {
-      return { success: false, error: '目标元素无效' };
+    if (!this._isEditableElement(element)) {
+      return { success: false, error: 'The selected input is no longer editable. Click another input and try again.' };
     }
 
     const keyInfo = this._getKeyInfo(char);
+    const nativeField = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+    const previousValue = nativeField ? element.value : null;
+    const hasSelection = nativeField && typeof element.selectionStart === 'number';
+    const start = hasSelection ? element.selectionStart : previousValue?.length;
+    const end = hasSelection ? element.selectionEnd : start;
+    const expectedValue = nativeField
+      ? previousValue.substring(0, start) + char + previousValue.substring(end) : null;
 
     const keydownEvent = new KeyboardEvent('keydown', {
       key: char,
@@ -113,13 +120,21 @@ class StandardInputAdapter extends InputAdapter {
     element.dispatchEvent(keydownEvent);
     element.dispatchEvent(keypressEvent);
 
+    if (!this._isEditableElement(element)) {
+      return { success: false, error: 'The selected input became unavailable during typing.' };
+    }
+
     // 实际插入字符
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
-      const value = element.value;
-      this._setNativeValue(element, value.substring(0, start) + char + value.substring(end));
-      element.selectionStart = element.selectionEnd = start + 1;
+    let expectedAfterInput = expectedValue;
+    if (nativeField) {
+      // Some editors apply simulated keys themselves. Avoid inserting twice.
+      if (element.value !== previousValue && element.value !== expectedValue) {
+        return { success: false, error: 'The page changed or rejected the typed text. Check the input and try again.' };
+      }
+      if (element.value === previousValue) {
+        this._setNativeValue(element, expectedValue);
+        if (hasSelection) element.selectionStart = element.selectionEnd = start + char.length;
+      }
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
       
@@ -145,10 +160,17 @@ class StandardInputAdapter extends InputAdapter {
       } catch (e) {
         document.execCommand('insertText', false, char);
       }
+      expectedAfterInput = element.textContent;
     }
 
     element.dispatchEvent(inputEvent);
     element.dispatchEvent(keyupEvent);
+
+    const actualValue = nativeField
+      ? element.value : element.textContent;
+    if (actualValue !== expectedAfterInput) {
+      return { success: false, error: 'The page changed or rejected the typed text. Check the input and try again.' };
+    }
 
     return { success: true };
   }
@@ -164,15 +186,16 @@ class StandardInputAdapter extends InputAdapter {
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const currentValue = element.value;
       if (currentValue.length > 0) {
-        const start = element.selectionStart;
-        const end = element.selectionEnd;
+        const hasSelection = typeof element.selectionStart === 'number';
+        const start = hasSelection ? element.selectionStart : currentValue.length;
+        const end = hasSelection ? element.selectionEnd : start;
         
         if (start === end && start > 0) {
           this._setNativeValue(element, currentValue.substring(0, start - 1) + currentValue.substring(start));
-          element.selectionStart = element.selectionEnd = start - 1;
+          if (hasSelection) element.selectionStart = element.selectionEnd = start - 1;
         } else if (start !== end) {
           this._setNativeValue(element, currentValue.substring(0, start) + currentValue.substring(end));
-          element.selectionStart = element.selectionEnd = start;
+          if (hasSelection) element.selectionStart = element.selectionEnd = start;
         }
       }
       
@@ -278,17 +301,7 @@ class StandardInputAdapter extends InputAdapter {
    * 检查元素是否可编辑
    */
   _isEditableElement(element) {
-    if (!element || !element.isConnected || element.closest('#paste-typer-floating-ui')) return false;
-
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      return element.type !== 'hidden' && !element.disabled && !element.readOnly;
-    }
-
-    if (element.contentEditable === 'true' || element.isContentEditable) {
-      return true;
-    }
-
-    return false;
+    return targetTracker.isEditable(element);
   }
 
   /**
@@ -297,7 +310,8 @@ class StandardInputAdapter extends InputAdapter {
   _findBestEditableElement() {
     const inputs = document.querySelectorAll('input, textarea');
     for (const input of inputs) {
-      if (this._isEditableElement(input)) {
+      const rect = input.getBoundingClientRect();
+      if (this._isEditableElement(input) && rect.width > 0 && rect.height > 0) {
         return input;
       }
     }
@@ -325,13 +339,13 @@ class StandardInputAdapter extends InputAdapter {
     if (char === '\t') return { code: 'Tab', keyCode: 9, charCode: 9 };
 
     // 字母
-    if (/[a-zA-Z]/.test(char)) {
+    if (char.length === 1 && /[a-zA-Z]/.test(char)) {
       const upper = char.toUpperCase();
       return { code: `Key${upper}`, keyCode: upper.charCodeAt(0), charCode };
     }
 
     // 数字
-    if (/[0-9]/.test(char)) {
+    if (char.length === 1 && /[0-9]/.test(char)) {
       return { code: `Digit${char}`, keyCode: char.charCodeAt(0), charCode };
     }
 
@@ -362,4 +376,3 @@ class StandardInputAdapter extends InputAdapter {
     return { code: 'Unidentified', keyCode: charCode, charCode };
   }
 }
-

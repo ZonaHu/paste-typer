@@ -11,17 +11,21 @@ class PasteTyper {
     this.isTyping = false;
     this.isPaused = false;
     this.currentText = '';
+    this.currentGraphemes = [];
     this.currentPosition = 0;
+    this.sessionId = 0;
     this.targetElement = null;
     this.currentAdapter = null; // 当前使用的适配器
     this.lastError = null;
+    this.deliveryVerified = true;
     this.typingSpeed = 50; // Base delay between characters in ms
     this.speedVariation = 20; // Random variation in typing speed
     this.pauseChance = 0.1; // Chance of pausing during typing
     this.pauseDuration = 200; // Duration of pauses in ms
     
     // Enhanced human-like typing features
-    this.typoChance = 0.005; // 0.5% chance of making a typo
+    this.typoChance = 0.05; // Matches the default 5% slider setting.
+    this.typoChanceFromRequest = false;
     this.typoCorrectionDelay = 300; // Delay before correcting typo
     
     // Input field navigation
@@ -38,7 +42,7 @@ class PasteTyper {
 
   loadTypoChanceSetting() {
     chrome.storage.local.get(['pasteTyperSettings'], (result) => {
-      if (result.pasteTyperSettings && result.pasteTyperSettings.typoChance !== undefined) {
+      if (!this.typoChanceFromRequest && result.pasteTyperSettings && result.pasteTyperSettings.typoChance !== undefined) {
         const sliderValue = parseInt(result.pasteTyperSettings.typoChance);
         this.typoChance = sliderValue / 100;
       }
@@ -55,6 +59,7 @@ class PasteTyper {
         // Update typoChance if provided
         if (request.typoChance !== undefined) {
           this.typoChance = request.typoChance;
+          this.typoChanceFromRequest = true;
         }
         if (request.speed !== undefined) {
           this.typingSpeed = request.speed;
@@ -99,10 +104,11 @@ class PasteTyper {
       } else if (request.action === 'getTypingProgress') {
         sendResponse({
           position: this.currentPosition,
-          total: this.currentText.length,
+          total: this.currentGraphemes.length,
           isTyping: this.isTyping,
           isPaused: this.isPaused,
-          error: this.lastError
+          error: this.lastError,
+          deliveryVerified: this.deliveryVerified
         });
       } else if (request.action === 'startInputNavigation') {
         this.startInputNavigation();
@@ -155,8 +161,10 @@ class PasteTyper {
       if (floatingContainer.style.display === 'none') {
         floatingContainer.style.display = 'block';
         this.loadFloatingUIPosition(floatingContainer);
+        this.floatingUIController?.syncTypingState();
       } else {
         floatingContainer.style.display = 'none';
+        this.floatingUIController?.stopProgressTracking();
       }
       return;
     }
@@ -366,19 +374,12 @@ class PasteTyper {
 
 
   isEditableElement(element) {
-    const editableTags = ['INPUT', 'TEXTAREA'];
-    const editableTypes = ['text', 'email', 'password', 'search', 'url', 'tel'];
-    
-    return editableTags.includes(element.tagName) ||
-           (element.tagName === 'INPUT' && editableTypes.includes(element.type)) ||
-           element.contentEditable === 'true' ||
-           element.isContentEditable;
+    return targetTracker.isEditable(element);
   }
 
   async startTyping(text, useActiveElement = true) {
     if (this.isTyping) {
-      debug.log('[PasteTyper] Already typing, ignoring request');
-      return;
+      throw new Error('Typing is already in progress. Stop the current session before starting another.');
     }
 
     // 使用适配器系统
@@ -402,9 +403,14 @@ class PasteTyper {
         
         this.isTyping = true;
         this.lastError = null;
+        // Canvas editors do not expose accepted document text to this adapter.
+        this.deliveryVerified = !(this.currentAdapter instanceof GoogleDocsAdapter);
         this.isPaused = false;
         this.currentText = text.replace(/\r\n?/g, '\n');
+        this.currentGraphemes = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+          .segment(this.currentText)].map(part => part.segment);
         this.currentPosition = 0;
+        const sessionId = ++this.sessionId;
         this.targetElement = targetElement;
 
         // 使用适配器聚焦
@@ -415,7 +421,8 @@ class PasteTyper {
         // resetTyping action, never part of starting a session.
 
         // 开始逐字输入（不等待完成，异步执行）
-        this.continueTyping().catch(err => {
+        this.continueTyping(sessionId).catch(err => {
+          if (sessionId !== this.sessionId) return;
           console.error('[PasteTyper] Typing error:', err);
           this.lastError = err.message;
           this.isTyping = false;
@@ -431,10 +438,10 @@ class PasteTyper {
     }
   }
 
-  async continueTyping() {
+  async continueTyping(sessionId) {
     const CHUNK_SIZE = 50; // 长文本分块输入，避免页面卡死
     
-    while (this.currentPosition < this.currentText.length && this.isTyping) {
+    while (this.currentPosition < this.currentGraphemes.length && this.isTyping && sessionId === this.sessionId) {
       // Check if paused
       if (this.isPaused) {
         await this.sleep(100);
@@ -442,17 +449,17 @@ class PasteTyper {
       }
       
       // 对于长文本，分块输入以避免页面卡死
-      const remaining = this.currentText.length - this.currentPosition;
+      const remaining = this.currentGraphemes.length - this.currentPosition;
       const chunkSize = remaining > CHUNK_SIZE ? CHUNK_SIZE : remaining;
       
-      for (let i = 0; i < chunkSize && this.currentPosition < this.currentText.length && this.isTyping; i++) {
+      for (let i = 0; i < chunkSize && this.currentPosition < this.currentGraphemes.length && this.isTyping && sessionId === this.sessionId; i++) {
         if (this.isPaused) break;
         
-        const char = this.currentText[this.currentPosition];
+        const char = this.currentGraphemes[this.currentPosition];
         
         // Check for typo (before typing the character)
         if (this.typoChance > 0 && Math.random() < this.typoChance && this.shouldMakeTypo(char)) {
-          await this.makeTypoAndCorrect(char);
+          await this.makeTypoAndCorrect(char, sessionId);
           continue; // Skip normal typing for this character
         }
         
@@ -464,7 +471,7 @@ class PasteTyper {
         if (Math.random() < this.pauseChance) {
           await this.sleep(this.pauseDuration);
         }
-        if (!this.isTyping) break;
+        if (!this.isTyping || sessionId !== this.sessionId) break;
         if (this.isPaused) continue;
         
         // Type the character using the adapter
@@ -472,16 +479,17 @@ class PasteTyper {
         if (!result.success) {
           throw new Error(result.error || 'The editor did not accept input.');
         }
+        if (sessionId !== this.sessionId) break;
         this.currentPosition++;
       }
       
       // 每处理一个 chunk 后稍作休息，避免页面卡死
-      if (this.currentPosition < this.currentText.length) {
+      if (this.currentPosition < this.currentGraphemes.length && this.isTyping && sessionId === this.sessionId) {
         await this.sleep(10);
       }
     }
     
-    if (this.currentPosition >= this.currentText.length) {
+    if (sessionId === this.sessionId && this.currentPosition >= this.currentGraphemes.length) {
       this.isTyping = false;
       this.isPaused = false;
     }
@@ -493,21 +501,21 @@ class PasteTyper {
       return false;
     }
     // Don't make typos if we're near the end
-    if (this.currentPosition > this.currentText.length - 5) {
+    if (this.currentPosition > this.currentGraphemes.length - 5) {
       return false;
     }
     // Only make typos on letters and numbers
     return /[a-zA-Z0-9]/.test(char);
   }
 
-  async makeTypoAndCorrect(correctChar) {
+  async makeTypoAndCorrect(correctChar, sessionId) {
     // Generate a realistic typo (adjacent key on keyboard)
     const typoChar = this.generateTypo(correctChar);
     
     if (!typoChar) {
       // If we can't generate a typo, just type the character normally
-      await this.currentAdapter.typeCharacter(this.targetElement, correctChar);
-      this.currentPosition++;
+      this.requireInput(await this.currentAdapter.typeCharacter(this.targetElement, correctChar));
+      if (sessionId === this.sessionId) this.currentPosition++;
       return;
     }
 
@@ -516,18 +524,20 @@ class PasteTyper {
 
     // Wait a bit (human realizes the mistake)
     await this.sleep(this.typoCorrectionDelay);
+    if (!this.isTyping || sessionId !== this.sessionId) return;
 
     // Delete the typo (backspace)
     this.requireInput(await this.currentAdapter.simulateBackspace(this.targetElement));
 
     // Small pause before typing correct character
     await this.sleep(50 + Math.random() * 50);
+    if (!this.isTyping || sessionId !== this.sessionId) return;
 
     // Type the correct character
     this.requireInput(await this.currentAdapter.typeCharacter(this.targetElement, correctChar));
 
     // Move position forward
-    this.currentPosition++;
+    if (sessionId === this.sessionId) this.currentPosition++;
   }
 
   generateTypo(char) {
@@ -592,7 +602,8 @@ class PasteTyper {
       // Last resort: look for any element with contenteditable
       const editables = document.querySelectorAll('[contenteditable]');
       if (editables.length > 0) {
-        return editables[0];
+        return [...editables].find(element => targetTracker.isEditable(element) &&
+          element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0) || null;
       }
       return null;
     }
@@ -606,7 +617,7 @@ class PasteTyper {
       const rect = input.getBoundingClientRect();
       
       // Skip invisible elements
-      if (rect.width === 0 && rect.height === 0) continue;
+      if (!targetTracker.isEditable(input) || rect.width === 0 || rect.height === 0) continue;
       
       // Prioritize focused element
       if (input === document.activeElement) score += 100;
@@ -650,6 +661,7 @@ class PasteTyper {
   stopTyping() {
     this.isTyping = false;
     this.isPaused = false;
+    this.sessionId++;
   }
 
   pauseTyping() {
@@ -668,6 +680,7 @@ class PasteTyper {
     this.stopTyping();
     this.currentPosition = 0;
     this.currentText = '';
+    this.currentGraphemes = [];
     
     // Try multiple strategies to find the element to clear
     let elementToClear = null;
@@ -678,6 +691,9 @@ class PasteTyper {
     // below cannot find.
     const adapter = typeof adapterManager !== 'undefined' && adapterManager
       ? adapterManager.getAdapter() : null;
+    if (adapter instanceof GoogleDocsAdapter) {
+      throw new Error('Clear is unavailable in Google Docs/Slides. Select and delete text in the document to avoid clearing the wrong content.');
+    }
     if (targetTracker.element && !targetTracker.getTarget()) {
       throw new Error('The selected input is no longer editable. Click another input and try again.');
     }
@@ -782,6 +798,9 @@ class PasteTyper {
       debug.log('Backspace loop failed, trying direct clear...');
       await this.directClear(element);
     }
+    if (this.getElementContent(element).length > 0) {
+      throw new Error('The page did not clear the selected field. Check the field and try again.');
+    }
     
     debug.log('Deletion complete. Final content:', this.getElementContent(element));
   }
@@ -808,7 +827,9 @@ class PasteTyper {
     
     // Select all content programmatically
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      element.setSelectionRange(0, element.value.length);
+      if (typeof element.selectionStart === 'number') {
+        element.setSelectionRange(0, element.value.length);
+      }
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       const selection = window.getSelection();
       const range = document.createRange();
@@ -886,7 +907,9 @@ class PasteTyper {
         const currentValue = element.value;
         if (currentValue.length > 0) {
           this._setNativeValue(element, currentValue.slice(0, -1));
-          element.setSelectionRange(element.value.length, element.value.length);
+          if (typeof element.selectionStart === 'number') {
+            element.setSelectionRange(element.value.length, element.value.length);
+          }
         }
       } else if (element.contentEditable === 'true' || element.isContentEditable) {
         const currentText = element.textContent || '';
@@ -1382,11 +1405,13 @@ class PasteTyper {
     
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       // Set selection to entire content
-      element.setSelectionRange(0, element.value.length);
+      if (typeof element.selectionStart === 'number') {
+        element.setSelectionRange(0, element.value.length);
+      }
       // Clear value via native setter (React/Vue safe)
       this._setNativeValue(element, '');
       // Set cursor to beginning
-      element.setSelectionRange(0, 0);
+      if (typeof element.selectionStart === 'number') element.setSelectionRange(0, 0);
     } else if (element.contentEditable === 'true' || element.isContentEditable) {
       // Select all content
       const selection = window.getSelection();
@@ -1463,7 +1488,7 @@ class PasteTyper {
     inputs.forEach(input => {
       const rect = input.getBoundingClientRect();
       // Only highlight visible elements
-      if (rect.width > 0 && rect.height > 0) {
+      if (targetTracker.isEditable(input) && rect.width > 0 && rect.height > 0) {
         input.classList.add('paste-typer-highlight');
         count++;
       }
@@ -1526,7 +1551,7 @@ class PasteTyper {
     const inputs = document.querySelectorAll(selectors.join(', '));
     this.availableInputs = Array.from(inputs).filter(input => {
       const rect = input.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0; // Only visible inputs
+      return targetTracker.isEditable(input) && rect.width > 0 && rect.height > 0;
     });
     
     this.selectedInputIndex = 0;
@@ -1574,6 +1599,7 @@ class PasteTyper {
   selectCurrentInput() {
     if (this.selectedInputIndex >= 0 && this.selectedInputIndex < this.availableInputs.length) {
       const selectedInput = this.availableInputs[this.selectedInputIndex];
+      if (!targetTracker.isEditable(selectedInput)) return false;
       
       // Store as target element BEFORE stopping navigation
       this.targetElement = selectedInput;

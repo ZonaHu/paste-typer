@@ -59,8 +59,7 @@ class PopupController {
     if (this.typoChanceSlider) {
       this.typoChanceSlider.addEventListener('input', () => {
         const value = parseInt(this.typoChanceSlider.value);
-        const percentage = (value / 100).toFixed(1);
-        this.typoChanceValue.textContent = `${percentage}%`;
+        this.typoChanceValue.textContent = `${value}%`;
         this.saveSettings();
       });
     }
@@ -148,7 +147,7 @@ class PopupController {
       this.startButton.disabled = true;
       
       // Get current settings
-      const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.005;
+      const typoChance = this.typoChanceSlider ? parseInt(this.typoChanceSlider.value) / 100 : 0.05;
       const speed = parseInt(this.speedSlider.value);
 
       const response = await this.sendMessageToTab({
@@ -227,17 +226,22 @@ class PopupController {
   }
 
   startProgressTracking() {
+    this.stopProgressTracking();
     this.progressContainer.style.display = 'block';
-    this.progressInterval = setInterval(async () => {
+    const interval = setInterval(async () => {
       try {
         const response = await this.sendMessageToTab({ action: 'getTypingProgress' });
+        if (this.progressInterval !== interval) return;
         if (response) {
           const { position, total, isTyping, isPaused } = response;
           
           if (!isTyping) {
             this.stopProgressTracking();
             this._setControls(false);
-            this.showStatus(response.error || 'Typing complete', response.error ? 'error' : 'success');
+            const unverified = response.deliveryVerified === false;
+            this.showStatus(response.error || (unverified
+              ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete'),
+            response.error ? 'error' : unverified ? 'info' : 'success');
             return;
           }
           
@@ -252,9 +256,13 @@ class PopupController {
           }
         }
       } catch (error) {
-        debug.log('Progress tracking error:', error);
+        if (this.progressInterval !== interval) return;
+        this.stopProgressTracking();
+        this._setControls(false);
+        this.showStatus('Lost connection to typing session: ' + error.message, 'error');
       }
     }, 500);
+    this.progressInterval = interval;
   }
 
   stopProgressTracking() {
@@ -559,17 +567,16 @@ class PopupController {
         if (this.typoChanceSlider) {
           if (settings.typoChance !== undefined) {
             this.typoChanceSlider.value = settings.typoChance;
-            const percentage = (parseInt(settings.typoChance) / 100).toFixed(1);
-            this.typoChanceValue.textContent = `${percentage}%`;
+            this.typoChanceValue.textContent = `${parseInt(settings.typoChance)}%`;
           } else {
             this.typoChanceSlider.value = 5;
-            this.typoChanceValue.textContent = '0.5%';
+            this.typoChanceValue.textContent = '5%';
           }
         }
       } else {
         if (this.typoChanceSlider) {
           this.typoChanceSlider.value = 5;
-          this.typoChanceValue.textContent = '0.5%';
+          this.typoChanceValue.textContent = '5%';
         }
       }
     });
