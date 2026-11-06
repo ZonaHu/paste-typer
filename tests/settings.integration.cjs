@@ -138,6 +138,86 @@ const server = http.createServer((req, res) => {
     assert.equal((await settings()).rememberText, true);
     assert.equal((await settings()).text, 'protected source');
     console.log('PASS Remember text, both deletion controls, disabled typing, reload, concurrent UI updates and forged clicks');
+
+    const delayInitialSettings = () => {
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      let delayed = false;
+      chrome.runtime.sendMessage = async request => {
+        const response = await send(request);
+        if (!delayed && request.action === 'ptSettings' && request.operation === 'get') {
+          delayed = true;
+          await new Promise(resolve => { globalThis.releaseStartupSettings = resolve; });
+        }
+        return response;
+      };
+    };
+    for (const kind of ['popup', 'floating']) {
+      for (const action of ['save', 'clearText', 'disable']) {
+        await worker.evaluate(() => chrome.storage.local.set({ pasteTyperSettings: {
+          text: 'old startup source', rememberText: true, textRevision: 3, speed: '50', typoChance: '0'
+        } }));
+        await waitFor(async () => await popup.locator('#rememberText').isChecked());
+        const startupPage = await context.newPage();
+        let startupUI, release;
+        if (kind === 'popup') {
+          await startupPage.addInitScript(delayInitialSettings);
+          await startupPage.goto(`chrome-extension://${id}/popup.html`);
+          await startupPage.waitForFunction(() => typeof globalThis.releaseStartupSettings === 'function');
+          startupUI = startupPage;
+          release = () => startupPage.evaluate(() => globalThis.releaseStartupSettings());
+        } else {
+          await startupPage.goto(`http://127.0.0.1:${server.address().port}/?startup=${action}`);
+          const startupTabId = await worker.evaluate(async url =>
+            (await chrome.tabs.query({})).find(tab => tab.url === url).id, startupPage.url());
+          await worker.evaluate(tabId => frameRouter.prepare(tabId), startupTabId);
+          await worker.evaluate(tabId => chrome.scripting.executeScript({
+            target: { tabId }, world: 'ISOLATED', func: () => {
+              const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+              let delayed = false;
+              chrome.runtime.sendMessage = async request => {
+                const response = await send(request);
+                if (!delayed && request.action === 'ptSettings' && request.operation === 'get') {
+                  delayed = true;
+                  await new Promise(resolve => { globalThis.releaseStartupSettings = resolve; });
+                }
+                return response;
+              };
+            }
+          }), startupTabId);
+          await worker.evaluate(tabId => frameRouter.route(tabId, { action: 'toggleFloatingUI' }), startupTabId);
+          startupUI = startupPage.locator('#paste-typer-floating-ui');
+          await waitFor(async () => worker.evaluate(async tabId => {
+            const [{ result }] = await chrome.scripting.executeScript({
+              target: { tabId }, world: 'ISOLATED', func: () => typeof globalThis.releaseStartupSettings === 'function'
+            });
+            return result;
+          }, startupTabId));
+          release = () => worker.evaluate(tabId => chrome.scripting.executeScript({
+            target: { tabId }, world: 'ISOLATED', func: () => globalThis.releaseStartupSettings()
+          }), startupTabId);
+        }
+        await startupUI.locator('#textInput').fill('fresh startup draft');
+        if (action === 'clearText') await popup.locator('#deleteSavedText').click();
+        if (action === 'disable') await popup.locator('#rememberText').uncheck();
+        if (action !== 'save') await waitFor(async () => (await settings()).text === undefined);
+        await release();
+        await startupUI.locator('#rememberText:enabled').waitFor();
+        if (action === 'save') {
+          await waitFor(async () => (await settings()).text === 'fresh startup draft');
+          assert.equal(await startupUI.locator('#textInput').inputValue(), 'fresh startup draft');
+        } else {
+          assert.equal(await startupUI.locator('#textInput').inputValue(), '');
+          assert.equal(await startupUI.locator('#rememberText').isChecked(), action !== 'disable');
+          assert.equal((await settings()).text, undefined);
+          if (action === 'clearText') {
+            await startupUI.locator('#textInput').fill('new source after deletion');
+            await waitFor(async () => (await settings()).text === 'new source after deletion');
+          }
+        }
+        await startupPage.close();
+        console.log(`PASS ${kind} startup ${action}: delayed revision read preserves fresh text and privacy actions`);
+      }
+    }
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });
   }

@@ -215,17 +215,24 @@ class FloatingUIController {
   async _saveSettings(field) {
     const values = { text: this.textInput.value, speed: this.speedSlider.value,
       typoChance: this.typoChanceSlider.value };
+    const version = this.textVersion;
+    await this.settingsReady;
+    if (field === 'text' && version !== this.textVersion) return;
     await this.settingsRequest('save', { [field]: values[field] });
   }
 
   async loadSettings() {
     const settings = await this.settingsRequest('get');
-    this.sourceRevision = settings.textRevision || 0;
-    this.rememberSourceText = this.rememberText.checked = settings.rememberText;
+    // A privacy change can arrive while the initial response is in flight.
+    const currentSource = (settings.textRevision || 0) >= this.sourceRevision;
+    if (currentSource) {
+      this.sourceRevision = settings.textRevision || 0;
+      this.rememberSourceText = this.rememberText.checked = settings.rememberText;
+    }
     this.rememberText.disabled = this.deleteSavedText.disabled = false;
 
     if (settings) {
-      if (settings.rememberText && settings.text && !this.textEdited) {
+      if (currentSource && settings.rememberText && settings.text && !this.textEdited) {
         this.textInput.value = settings.text;
       }
 

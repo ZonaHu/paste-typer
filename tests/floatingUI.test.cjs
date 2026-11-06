@@ -167,5 +167,5 @@ test('closing before disabled privacy settings load still discards the private d
   await state.controller.settingsReady;
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(input.value, '');
-  assert.equal(state.writes.at(-1).pasteTyperSettings.text, undefined);
+  assert.equal(state.writes.some(write => 'text' in write.pasteTyperSettings), false);
 });
