@@ -43,6 +43,20 @@ Run the frame routing and selection regression checks with Node.js:
 node --test tests/*.test.cjs
 ```
 
+Navigate has a disposable Chrome regression for field filtering, nested rich-text
+editors, selected-field preference, dynamic page changes, the popup-to-typing
+flow, and Chrome Web Store restrictions:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/navigation.integration.cjs
+```
+
+Set `PT_WEB_STORE_CHECK=1` to include a live Chrome Web Store restriction check
+(requires network). It verifies Chrome rejects injection and Paste Typer explains
+why. The test extension grants that host only in its temporary copy, so missing
+host access cannot masquerade as the Web Store restriction. The Node suite also
+checks translation of Chrome's gallery error without network access.
+
 For ordinary-field insertion changes, run `tests/standardInput.integration.cjs`
 with the same test-only Playwright setup described below:
 
