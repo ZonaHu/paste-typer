@@ -69,6 +69,13 @@ of the field. **Clear entire field** explicitly deletes all content in the selec
 
 **Right-click menu** — copy text, right-click the target field, choose "Paste as typed text".
 
+**Stop shortcut** — press **Ctrl+Shift+K** (**Command+Shift+K** on macOS) to
+send Stop to the running or paused session in the current tab, including a
+permitted embedded editor. The popup and floating panel can both be closed.
+Choose or change the binding at `chrome://extensions/shortcuts` if the suggested
+key is already in use. It works while Chrome has focus; it does not stop sessions
+in other tabs.
+
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 
 **Embedded editors** — if the editor is hosted on another site, choose its site under

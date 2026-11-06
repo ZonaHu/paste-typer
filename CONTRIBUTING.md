@@ -55,6 +55,17 @@ selection replacement, input notifications, popup/floating controls, and explici
 Clear. Context-menu coverage exercises its frame-routing contract, not the native
 menu or clipboard permission UI.
 
+The stop command has a disposable Chrome regression:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/stopCommand.integration.cjs
+```
+
+It verifies Chrome's command registration and invokes the production handler to
+stop running/paused sessions. The Node tests invoke the registered command
+listener and verify cross-origin frame routing. Physical key binding and OS
+shortcut conflicts still need a manual check at `chrome://extensions/shortcuts`.
+
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.
