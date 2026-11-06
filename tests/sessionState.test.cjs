@@ -9,10 +9,13 @@ function setup() {
     document: { addEventListener() {} },
     chrome: { storage: { local: { get(keys, callback) { callback({}); } } },
       runtime: { onMessage: { addListener(fn) { listeners.push(fn); } } } } });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8'), context);
+  for (const file of ['content/typoRate.js', 'content/graphemes.js', 'content.js']) {
+    const source = path.join(__dirname, '..', file);
+    if (fs.existsSync(source)) vm.runInContext(fs.readFileSync(source, 'utf8'), context);
+  }
   const typer = vm.runInContext('pasteTyper', context);
   Object.assign(typer, { sessionId: 1, sessionState: 'running', isTyping: true,
-    currentText: 'abcdef', currentPosition: 0, pauseChance: 0, typoChance: 0,
+    currentText: 'abcdef', currentGraphemes: ['a', 'b', 'c', 'd', 'e', 'f'], currentPosition: 0, pauseChance: 0, typoChance: 0,
     currentAdapter: { async typeCharacter(el, char) { events.push(char); return { success: true }; },
       async simulateBackspace() { events.push('backspace'); return { success: true }; } },
     generateTypo: () => 's', sleep() { return new Promise(resolve => waits.push(resolve)); } });
@@ -48,6 +51,7 @@ test('Stop then restart invalidates the old normal-delay continuation', async ()
   await state.drain(); state.typer.stopTyping();
   state.typer.isTyping = true; state.typer.sessionState = 'running'; state.typer.sessionId++;
   state.typer.currentText = 'XYZ'; state.typer.currentPosition = 0;
+  state.typer.currentGraphemes = ['X', 'Y', 'Z'];
   state.waits.shift()(); await state.drain();
   assert.deepEqual(state.events, []);
   // Stop the fresh session so the old loop cannot remain pending in the fixture.
