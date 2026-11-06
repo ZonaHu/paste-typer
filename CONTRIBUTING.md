@@ -91,6 +91,16 @@ Repeat it with Monaco 0.45 and 0.57 using the test-only setup below; point
 `PT_MONACO_DEPS` at a separate dependency directory to switch Monaco versions.
 Google Docs/Slides event construction has Node coverage only; this check does
 not verify delivery into those canvas editors.
+Accepted-text verification has its own disposable Chrome fixture, including
+ordinary/rich-text rejection and transformation, page-handled keys, Monaco CRLF,
+and unverified canvas delivery:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/acceptance.integration.cjs
+```
+
+It uses the test-only Playwright/Monaco setup below. Repeat with both Monaco
+versions; `PT_MONACO_DEPS` may point to a separate Monaco installation.
 
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
