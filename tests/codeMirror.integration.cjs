@@ -24,7 +24,7 @@ const fixture = esbuild.buildSync({ bundle: true, write: false, format: 'iife',
   nodePaths: [path.join(editorDependencies, 'node_modules')], stdin: { resolveDir: editorDependencies, contents: `
 import { EditorState, EditorSelection, Transaction } from '@codemirror/state';
 import { EditorView, keymap, Decoration, WidgetType } from '@codemirror/view';
-import { history, historyKeymap, undo, redo } from '@codemirror/commands';
+import { history, historyKeymap, undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
 class InputWidget extends WidgetType {
   toDOM() {
     const wrapper = document.createElement('span'); wrapper.contentEditable = 'false';
@@ -42,7 +42,7 @@ window.resetEditor = (index, doc, selection, options = {}) => {
     EditorView.updateListener.of(update => {
       for (const tr of update.transactions) if (tr.docChanged) {
         const changes = []; tr.changes.iterChanges((from, to, _a, _b, inserted) => changes.push({from, to, text: inserted.toString()}));
-        transactions.push({index, changes, event: tr.annotation(Transaction.userEvent)});
+        transactions.push({index, changes, event: tr.annotation(Transaction.userEvent), time: tr.annotation(Transaction.time)});
       }
     })];
   if (options.widgets) extensions.push(EditorView.decorations.of(Decoration.set([
@@ -56,6 +56,7 @@ window.resetEditor = (index, doc, selection, options = {}) => {
   editors[index].focus(); transactions.length = 0;
 };
 window.historyAction = (index, action) => (action === 'undo' ? undo : redo)(editors[index]);
+window.historyDepth = (index, action) => (action === 'undo' ? undoDepth : redoDepth)(editors[index].state);
 resetEditor(1, 'SECOND', {anchor: 0}); resetEditor(0, 'abcdef', {anchor: 3}); window.ready = true;
 ` } }).outputFiles[0].contents;
 const server = http.createServer((req, res) => {
@@ -89,6 +90,11 @@ const server = http.createServer((req, res) => {
       const result = await chrome.scripting.executeScript({ target: { tabId, documentIds: [documentId] }, world: 'ISOLATED',
         func: async (operation, args) => {
           if (operation === 'setup') { pasteTyper.pauseChance = 0; return; }
+          if (operation === 'delayLastCharacter') {
+            if (args[0]) pasteTyper.getRandomDelay = () => pasteTyper.currentPosition === 2 ? 650 : 10;
+            else delete pasteTyper.getRandomDelay;
+            return;
+          }
           if (operation === 'adapterName') return adapterManager.getAdapter().constructor.name;
           if (operation === 'metadata') return typeof document.querySelector('.cm-content').cmView;
           if (operation === 'locked') return new CodeMirrorAdapter().typeCharacter(document.querySelector('#one .cm-content'), 'X');
@@ -132,12 +138,53 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#outside').inputValue(), 'OUTSIDE');
     assert.deepEqual(await editor.evaluate(() => transactions.map(tr => tr.changes[0].text)), ['X', 'Y', 'Z']);
     assert.ok(await editor.evaluate(() => transactions.every(tr => tr.event === 'input.type')));
-    assert.equal(await editor.evaluate(() => historyAction(0, 'undo')), true);
-    assert.equal((await read())[0].text, 'abcdef');
-    assert.equal((await read())[0].selection.ranges[0].anchor, 3);
-    assert.equal(await editor.evaluate(() => historyAction(0, 'redo')), true);
-    assert.equal((await read())[0].text, 'abcXYZdef');
-    console.log('PASS engine types one transaction per character in selected cross-origin editor; Undo/Redo preserve model and caret');
+    const verifyHistory = async (minimumGroups = 1) => {
+      const groups = await editor.evaluate(() => historyDepth(0, 'undo'));
+      assert.ok(groups >= minimumGroups && groups <= 3, `Unexpected native history depth: ${groups}`);
+      const times = await editor.evaluate(() => transactions.map(transaction => transaction.time));
+      assert.equal(times.length, 3);
+      assert.ok(times.every(Number.isFinite));
+      const expectedGroups = 1 + times.slice(1).filter((time, index) => time - times[index] >= 500).length;
+      assert.equal(groups, expectedGroups, 'Adjacent typing must follow the default native grouping timeout');
+      // CodeMirror's default 500ms group boundary belongs to the host. A slow
+      // machine or human pause may split XYZ; every native group must round-trip.
+      let remaining = 3;
+      for (let i = 0; i < groups; i++) {
+        assert.equal(await editor.evaluate(() => historyAction(0, 'undo')), true);
+        const [current, other] = await read();
+        const length = current.text.length - 'abcdef'.length;
+        assert.ok(length >= 0 && length < remaining);
+        assert.equal(current.text, 'abc' + 'XYZ'.slice(0, length) + 'def');
+        assert.equal(current.selection.ranges[0].anchor, 3 + length);
+        assert.equal(other.text, 'SECOND');
+        remaining = length;
+      }
+      assert.equal(remaining, 0);
+      assert.equal(await editor.evaluate(() => historyAction(0, 'undo')), false);
+      assert.equal(await editor.evaluate(() => historyDepth(0, 'redo')), groups);
+      for (let i = 0; i < groups; i++) {
+        assert.equal(await editor.evaluate(() => historyAction(0, 'redo')), true);
+        const [current, other] = await read();
+        const length = current.text.length - 'abcdef'.length;
+        assert.ok(length > remaining && length <= 3);
+        assert.equal(current.text, 'abc' + 'XYZ'.slice(0, length) + 'def');
+        assert.equal(current.selection.ranges[0].anchor, 3 + length);
+        assert.equal(other.text, 'SECOND');
+        remaining = length;
+      }
+      assert.equal(remaining, 3);
+      assert.equal(await editor.evaluate(() => historyAction(0, 'redo')), false);
+    };
+    await verifyHistory();
+    console.log('PASS engine types one transaction per character in selected cross-origin editor; every native Undo/Redo group preserves model and caret');
+    await reset(0, 'abcdef', { anchor: 3 });
+    await isolated('delayLastCharacter', [true]);
+    await start('XYZ');
+    const times = await editor.evaluate(() => transactions.map(transaction => transaction.time));
+    assert.ok(times[2] - times[1] >= 500, 'Fixture must cross the native history grouping timeout');
+    await verifyHistory(2);
+    await isolated('delayLastCharacter', [false]);
+    console.log('PASS a pause across the native 500ms history boundary splits Undo groups without losing text or caret history');
 
     await reset(0, 'abcdef', { anchor: 3 }, { widgets: true });
     for (const [selector, initial] of [['#widget-input', 'INPUT'], ['#widget-textarea', 'TEXTAREA'], ['#widget-rich', 'RICH']]) {
@@ -303,7 +350,9 @@ const server = http.createServer((req, res) => {
     await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('F');
     await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').fill('0');
     await page.locator('#paste-typer-floating-ui').locator('#startTyping').click();
-    await page.locator('#paste-typer-floating-ui').locator('#status').filter({ hasText: 'Typing started!' }).waitFor();
+    // One character may complete before the UI's next progress poll. Its
+    // transient started status is not the delivery oracle; use the real model.
+    await editor.waitForFunction(() => editors[1].state.doc.toString() === 'SPFD');
     await waitDone(); assert.deepEqual((await read()).map(item => item.text), ['abc', 'SPFD']);
     console.log('PASS popup focus and trusted floating UI preserve selected editor/model selection');
     const cleared = await route({ action: 'resetTyping' });

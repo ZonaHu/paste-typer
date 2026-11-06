@@ -108,6 +108,11 @@ full-grapheme cases invoke its real runtime bridge directly. Lone UTF-16
 surrogates are rejected; a complete combining or ZWJ sequence remains one
 transaction, including graphemes longer than 32 code units.
 
+The Undo regression uses the default 500 ms history grouping boundary and
+recorded transaction timestamps. Every native group must restore exact text and
+caret through Undo/Redo, including a deliberate pause; an entire source is not
+assumed to be a single Undo event.
+
 The bridge resolves the selected page view through the metadata used by the
 public `EditorView.findFromDOM` implementation, then validates that view's DOM
 identity. CodeMirror 6.36.2 uses
