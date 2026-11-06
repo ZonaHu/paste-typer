@@ -55,6 +55,18 @@ selection replacement, input notifications, popup/floating controls, and explici
 Clear. Context-menu coverage exercises its frame-routing contract, not the native
 menu or clipboard permission UI.
 
+For split code inputs, run the sibling-group regression with the same setup:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/splitCodeInput.integration.cjs
+```
+
+It checks six `maxlength="1"` sibling inputs with page or adapter focus advance,
+partial starts, native Undo/Redo, typo correction, Stop, and group boundaries.
+The adapter recognizes contiguous visible, editable text/tel/password inputs;
+separators, ordinary controls and different parents end the group. Overflow stops
+with an error instead of writing outside that group.
+
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.
