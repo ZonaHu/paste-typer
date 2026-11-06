@@ -5,6 +5,7 @@ const PT_CONTENT_FILES = [
   'content/graphemes.js',
   'content/inputAdapter.js', 'content/targetTracker.js',
   'content/googleDocsAdapter.js', 'content/standardInputAdapter.js',
+  'content/splitCodeInputAdapter.js',
   'content/monacoAdapter.js', 'content/adapterManager.js', 'floating-ui.js', 'content.js'
 ];
 
