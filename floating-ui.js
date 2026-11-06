@@ -137,14 +137,16 @@ class FloatingUIController {
     this.sessionState = state;
     this.lastSessionId = progress.sessionId;
     const active = state === 'running' || state === 'paused';
-    this.startButton.disabled = active || state === 'stopping';
-    this.stopButton.disabled = !active;
+    const clearing = state === 'clearing';
+    this.startButton.disabled = active || clearing || state === 'stopping';
+    this.stopButton.disabled = !(active || clearing);
     this.pauseButton.disabled = !active;
     this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
     if (!changed && state !== 'running') return;
     if (state === 'error') this.showStatus(progress.error || 'Typing failed', 'error');
     else if (state === 'stopped') this.showStatus('Stopped', 'info');
     else if (state === 'stopping') this.showStatus('Stopping...', 'info');
+    else if (state === 'clearing') this.showStatus('Clearing selected field...', 'info');
     else if (state === 'completed') this.showStatus(progress.deliveryVerified === false
       ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete',
     progress.deliveryVerified === false ? 'info' : 'success');

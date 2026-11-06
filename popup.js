@@ -216,8 +216,11 @@ class PopupController {
     this.sessionState = state;
     this.lastSessionId = progress.sessionId;
     const active = state === 'running' || state === 'paused';
-    this._setControls(active);
-    this.startButton.disabled = active || state === 'stopping';
+    const clearing = state === 'clearing';
+    this._setControls(active || clearing);
+    this.startButton.disabled = active || clearing || state === 'stopping';
+    this.pauseButton.disabled = !active;
+    this.stopButton.disabled = !(active || clearing);
     this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
     this.pauseButton.style.backgroundColor = state === 'paused' ? '#16a34a' : '#f59e0b';
     this.progressContainer.style.display = active ? 'block' : 'none';
@@ -228,6 +231,7 @@ class PopupController {
     if (state === 'error') this.showStatus(progress.error || 'Typing failed', 'error');
     else if (state === 'stopped') this.showStatus('Typing stopped', 'info');
     else if (state === 'stopping') this.showStatus('Stopping...', 'info');
+    else if (state === 'clearing') this.showStatus('Clearing selected field...', 'info');
     else if (state === 'completed') this.showStatus(progress.deliveryVerified === false
       ? 'Keystrokes sent. Check the document for missing text.' : 'Typing complete',
     progress.deliveryVerified === false ? 'info' : 'success');

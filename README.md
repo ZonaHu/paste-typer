@@ -67,6 +67,8 @@ git clone https://github.com/ZonaHu/paste-typer.git
 
 Start inserts at your caret or replaces only selected text, preserving the rest
 of the field. **Clear entire field** explicitly deletes all content in the selected field.
+Start remains unavailable while Clear is working. Stop cancels pending Clear steps
+and waits for any edit already dispatched before reporting that it has stopped.
 
 **Right-click menu** — copy text, right-click the target field, choose "Paste as typed text".
 

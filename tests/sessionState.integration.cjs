@@ -104,6 +104,34 @@ const server = http.createServer((req, res) => {
       await popup.locator('#status').filter({ hasText: 'Typing complete' }).waitFor();
       assert.equal((await route({ action: 'getTypingProgress' })).state, 'completed');
     }
+    // Hold Clear at target discovery while both UIs observe the same operation.
+    await worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, world: 'ISOLATED', func: () => {
+      const original = adapterManager.getAdapter.bind(adapterManager);
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      adapterManager.getAdapter = (...args) => {
+        const adapter = original(...args), getTarget = adapter.getTarget.bind(adapter);
+        adapter.getTarget = async (...args) => { const target = await getTarget(...args); await held; return target; };
+        return adapter;
+      };
+      globalThis.releaseClearTarget = () => { adapterManager.getAdapter = original; release(); };
+    } }), tabId);
+    const beforeClear = await page.locator('#textarea').inputValue();
+    const clearing = route({ action: 'resetTyping' }).catch(error => ({ success: false, error: error.message }));
+    await popup.locator('#status').filter({ hasText: 'Clearing' }).waitFor();
+    await panel.locator('#status').filter({ hasText: 'Clearing' }).waitFor();
+    assert.equal(await popup.locator('#startTyping').isDisabled(), true);
+    assert.equal(await panel.locator('#startTyping').isDisabled(), true);
+    assert.equal(await popup.locator('#pauseTyping').isDisabled(), true);
+    assert.equal(await panel.locator('#pauseTyping').isDisabled(), true);
+    await assert.rejects(route({ action: 'startTyping', text: 'OVERLAP' }), /already running|clear/i);
+    await panel.locator('#stopTyping').click();
+    await worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, world: 'ISOLATED',
+      func: () => releaseClearTarget() }), tabId);
+    assert.equal((await clearing).success, false);
+    assert.equal(await page.locator('#textarea').inputValue(), beforeClear);
+    assert.equal((await route({ action: 'getTypingProgress' })).state, 'stopped');
+    console.log('PASS Clear blocks overlapping Start in both UIs; trusted Stop cancels delayed Clear without deleting text');
     console.log('PASS cross-UI Pause/Resume, popup reopen, shortcut Stop during correction, quick completion, and external restart after popup Stop/Clear');
   } finally {
     await context?.close(); server.close(); fs.rmSync(scratch, { recursive: true, force: true });

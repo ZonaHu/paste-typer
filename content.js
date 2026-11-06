@@ -11,6 +11,7 @@ class PasteTyper {
     this.sessionId = 0;
     this.sessionState = 'idle';
     this.pendingInput = null;
+    this.clearingSession = null;
     this.isTyping = false;
     this.isPaused = false;
     this.currentText = '';
@@ -53,7 +54,8 @@ class PasteTyper {
       if (request.action === 'getTargetInfo') {
         sendResponse({ hasTarget: !!targetTracker.getTarget() || GoogleDocsAdapter.detect(),
           invalidTarget: !!targetTracker.element && !targetTracker.getTarget(),
-          changedAt: targetTracker.changedAt, focused: document.hasFocus(), isTyping: this.isTyping });
+          changedAt: targetTracker.changedAt, focused: document.hasFocus(),
+          isTyping: this.isTyping || this.startingSession != null || this.clearingSession != null || !!this.pendingInput });
       } else if (request.action === 'startTyping') {
         // Update typoChance if provided
         if (request.typoChance !== undefined) {
@@ -382,6 +384,7 @@ class PasteTyper {
   }
 
   async startTyping(text, useActiveElement = true) {
+    if (this.clearingSession != null) throw new Error('Clear is still in progress. Stop it or wait before starting.');
     if (this.isTyping || this.startingSession != null) {
       throw new Error('Typing is already running. Stop the current session first.');
     }
@@ -669,6 +672,7 @@ class PasteTyper {
 
   async stopTyping() {
     const sessionId = ++this.sessionId;
+    this.clearingSession = null;
     this.startingSession = null;
     this.isTyping = false;
     this.isPaused = false;
@@ -676,7 +680,7 @@ class PasteTyper {
     // Acknowledgement follows any already-dispatched edit; no adapter operation
     // may mutate the page after Stop has replied to its caller.
     await this.pendingInput?.catch(() => {});
-    if (sessionId === this.sessionId) this.sessionState = 'stopped';
+    if (sessionId === this.sessionId) this.sessionState = this.clearingSession === sessionId ? 'clearing' : 'stopped';
   }
 
   pauseTyping() {
@@ -688,7 +692,35 @@ class PasteTyper {
   }
 
   async resetTyping() {
-    await this.stopTyping();
+    if (this.clearingSession != null) throw new Error('Clear is already in progress.');
+    const stopping = this.stopTyping();
+    const sessionId = this.sessionId;
+    this.clearingSession = sessionId;
+    this.sessionState = 'clearing';
+    try {
+      await stopping;
+      this.checkClearSession(sessionId);
+      await this.clearSelectedTarget(sessionId);
+      this.checkClearSession(sessionId);
+      this.sessionState = 'stopped';
+    } catch (error) {
+      if (sessionId === this.sessionId) {
+        this.sessionState = 'error';
+        this.lastError = error.message;
+      }
+      throw error;
+    } finally {
+      if (this.clearingSession === sessionId) this.clearingSession = null;
+    }
+  }
+
+  checkClearSession(sessionId) {
+    if (sessionId !== this.sessionId || this.clearingSession !== sessionId) {
+      throw new Error('Clear was canceled by Stop.');
+    }
+  }
+
+  async clearSelectedTarget(sessionId) {
     this.currentPosition = 0;
     this.currentText = '';
     
@@ -707,6 +739,7 @@ class PasteTyper {
     if (adapter) {
       try {
         const targetResult = await adapter.getTarget(true);
+        this.checkClearSession(sessionId);
         if (targetResult && targetResult.element) {
           elementToClear = targetResult.element;
           fromAdapter = true;
@@ -717,6 +750,8 @@ class PasteTyper {
         debug.warn('Adapter getTarget failed during reset:', e);
       }
     }
+
+    this.checkClearSession(sessionId);
 
     // Strategy 1: Use the stored target element
     if (!elementToClear && this.targetElement && this.isEditableElement(this.targetElement)) {
@@ -744,27 +779,35 @@ class PasteTyper {
       const isMonacoEditor = this.isMonacoEditor(elementToClear);
       debug.log('Is Monaco editor:', isMonacoEditor);
       
-      if (adapter instanceof MonacoAdapter) {
-        await adapter.reset(elementToClear);
-      } else {
-        // Focus the element first and ensure it's ready
-        elementToClear.focus();
-        await this.sleep(100); // Give focus time to settle
-        
-        // Get current text content
-        let currentText = '';
-        if (elementToClear.tagName === 'INPUT' || elementToClear.tagName === 'TEXTAREA') {
-          currentText = elementToClear.value;
-        } else if (elementToClear.contentEditable === 'true' || elementToClear.isContentEditable) {
-          currentText = elementToClear.textContent || elementToClear.innerText || '';
+      // Stop must wait for a Clear edit that has already been dispatched.
+      const operation = (async () => {
+        if (adapter instanceof MonacoAdapter) {
+          await adapter.reset(elementToClear);
+        } else {
+          // Focus the element first and ensure it's ready
+          elementToClear.focus();
+          await this.sleep(100); // Give focus time to settle
+          this.checkClearSession(sessionId);
+
+          // Get current text content
+          let currentText = '';
+          if (elementToClear.tagName === 'INPUT' || elementToClear.tagName === 'TEXTAREA') {
+            currentText = elementToClear.value;
+          } else if (elementToClear.contentEditable === 'true' || elementToClear.isContentEditable) {
+            currentText = elementToClear.textContent || elementToClear.innerText || '';
+          }
+
+          debug.log('Element to clear:', elementToClear.tagName, 'Current text length:', currentText.length);
+
+          // Always try to clear, even if text appears empty (might be hidden content)
+          await this.simulateHumanDeletion(elementToClear, Math.max(currentText.length, 1), sessionId);
         }
-        
-        debug.log('Element to clear:', elementToClear.tagName, 'Current text length:', currentText.length);
-        
-        // Always try to clear, even if text appears empty (might be hidden content)
-        await this.simulateHumanDeletion(elementToClear, Math.max(currentText.length, 1));
-      }
-      
+      })();
+      this.pendingInput = operation;
+      try { await operation; }
+      finally { if (this.pendingInput === operation) this.pendingInput = null; }
+      this.checkClearSession(sessionId);
+
       // Store this as our target element for future operations
       this.targetElement = elementToClear;
     } else {
@@ -773,10 +816,12 @@ class PasteTyper {
     }
   }
 
-  async simulateHumanDeletion(element, textLength) {
+  async simulateHumanDeletion(element, textLength, sessionId) {
+    this.checkClearSession(sessionId);
     debug.log('Starting deletion for element:', element, 'Text length:', textLength);
     element.focus();
     await this.sleep(50);
+    this.checkClearSession(sessionId);
     
     // Get initial content
     let initialContent = this.getElementContent(element);
@@ -784,7 +829,8 @@ class PasteTyper {
     
     // Try method 1: Ctrl+A then Delete
     debug.log('Trying Ctrl+A + Delete method...');
-    await this.simulateSelectAllAndDelete(element);
+    await this.simulateSelectAllAndDelete(element, sessionId);
+    this.checkClearSession(sessionId);
     
     // Check if content was cleared
     let remainingContent = this.getElementContent(element);
@@ -793,7 +839,8 @@ class PasteTyper {
     // If content still exists, try method 2: Character-by-character backspace
     if (remainingContent.length > 0) {
       debug.log('Ctrl+A+Delete failed, trying backspace loop...');
-      await this.simulateBackspaceLoop(element, remainingContent.length);
+      await this.simulateBackspaceLoop(element, remainingContent.length, sessionId);
+      this.checkClearSession(sessionId);
       
       // Check again
       remainingContent = this.getElementContent(element);
@@ -803,6 +850,7 @@ class PasteTyper {
     // If still not cleared, try method 3: Direct clearing
     if (remainingContent.length > 0) {
       debug.log('Backspace loop failed, trying direct clear...');
+      this.checkClearSession(sessionId);
       await this.directClear(element);
     }
     
@@ -818,7 +866,8 @@ class PasteTyper {
     return '';
   }
 
-  async simulateSelectAllAndDelete(element) {
+  async simulateSelectAllAndDelete(element, sessionId) {
+    this.checkClearSession(sessionId);
     // Simulate Ctrl+A (Select All)
     const ctrlAEvent = new KeyboardEvent('keydown', {
       key: 'a',
@@ -828,6 +877,7 @@ class PasteTyper {
       cancelable: true
     });
     element.dispatchEvent(ctrlAEvent);
+    this.checkClearSession(sessionId);
     
     // Select all content programmatically
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
@@ -842,6 +892,7 @@ class PasteTyper {
     
     // Small delay to make selection visible
     await this.sleep(50);
+    this.checkClearSession(sessionId);
     
     // Simulate Delete key
     const deleteEvent = new KeyboardEvent('keydown', {
@@ -852,6 +903,7 @@ class PasteTyper {
       cancelable: true
     });
     element.dispatchEvent(deleteEvent);
+    this.checkClearSession(sessionId);
     
     // Actually clear the content
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
@@ -884,9 +936,11 @@ class PasteTyper {
     element.dispatchEvent(deleteUpEvent);
   }
 
-  async simulateBackspaceLoop(element, textLength) {
+  async simulateBackspaceLoop(element, textLength, sessionId) {
+    this.checkClearSession(sessionId);
     // Simulate rapid backspace deletion (character by character)
     for (let i = 0; i < textLength + 5; i++) { // Add extra iterations to be sure
+      this.checkClearSession(sessionId);
       // Check current content
       const currentContent = this.getElementContent(element);
       if (currentContent.length === 0) {
@@ -903,6 +957,7 @@ class PasteTyper {
         cancelable: true
       });
       element.dispatchEvent(backspaceDown);
+      this.checkClearSession(sessionId);
       
       // Actually remove one character
       if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
