@@ -108,6 +108,13 @@ script without its floating controller. This verifies dependency repair without
 class redeclarations. The harness also checks settings persistence after panel
 recreation and removes partial markup when controller initialization fails.
 
+The Start fallback regression covers non-text, hidden, disabled, read-only and
+inert controls before a visible textarea:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/targetSelection.integration.cjs
+```
+
 ## Code style
 
 Plain JavaScript, no build tooling, no dependencies. Match the surrounding style.
