@@ -68,6 +68,9 @@ git clone https://github.com/ZonaHu/paste-typer.git
 
 Start inserts at your caret or replaces only selected text, preserving the rest
 of the field. **Clear entire field** explicitly deletes all content in the selected field.
+Clear is unavailable in Notion and block-based editors where a page-wide selection
+could also delete other blocks or the page title. Use the editor's own selection
+and delete controls there.
 Start remains unavailable while Clear is working. Stop cancels pending Clear steps
 and waits for any edit already dispatched before reporting that it has stopped.
 

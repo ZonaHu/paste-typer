@@ -25,6 +25,10 @@ const server = http.createServer((req, res) => {
     res.end('<input type="file" hidden><input type="text" hidden><textarea id="search" name="q"></textarea>');
     return;
   }
+  if (req.url === '/notion-like') {
+    res.end('<main class="notion-page-content"><h1 data-block-id="title" contenteditable="true">Keep this title</h1><div data-block-id="body" contenteditable="true">Body text</div></main>');
+    return;
+  }
   res.end('<input id="input"><input id="email" type="email"><input id="url" type="url"><input id="tel" type="tel"><textarea id="textarea"></textarea><div id="rich" contenteditable="true"></div><textarea id="other">UNTOUCHED</textarea><input type="text" disabled><input type="text" readonly><div contenteditable="false">LOCKED</div>');
 });
 (async () => {
@@ -211,6 +215,34 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#textarea').inputValue(), '');
     assert.equal(await page.locator('#other').inputValue(), 'UNTOUCHED');
     console.log('PASS explicit Clear still clears selected field');
+    await page.goto(`http://127.0.0.1:${server.address().port}/notion-like`);
+    await page.evaluate(() => {
+      const body = document.querySelector('[data-block-id="body"]');
+      body.focus();
+      document.addEventListener('keydown', event => {
+        if (event.target !== body) return;
+        if (event.key.toLowerCase() === 'a' && event.ctrlKey) {
+          setTimeout(() => {
+            const range = document.createRange();
+            range.selectNodeContents(document.querySelector('main'));
+            const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+          }, 0);
+        }
+        if (event.key === 'Delete') {
+          const selection = getSelection();
+          if (selection.rangeCount) selection.getRangeAt(0).deleteContents();
+        }
+      });
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    const notionClear = await route({ action: 'resetTyping' });
+    const notionContent = await page.evaluate(() => ({
+      title: document.querySelector('[data-block-id="title"]')?.textContent,
+      body: document.querySelector('[data-block-id="body"]')?.textContent
+    }));
+    assert.deepEqual(notionContent, { title: 'Keep this title', body: 'Body text' });
+    assert.match(notionClear.error, /Clear is unavailable/);
+    console.log('PASS Notion-style page blocks unsafe Clear without deleting title or body');
     await page.goto(`http://127.0.0.1:${server.address().port}/search-like`);
     await route({ action: 'startTyping', text: 'XYZ', speed: 10, typoChance: 0, targetElement: true });
     await waitDone();
