@@ -83,6 +83,14 @@ const server = http.createServer((req,res)=>{
       await new Promise(resolve=>setTimeout(resolve,30));assert.equal(await commandCount(),baseline);
     }
   };
+  const waitForSettings=async expected=>{
+    for(let i=0;i<100;i++){
+      const stored=await worker.evaluate(()=>chrome.storage.local.get('pasteTyperSettings'));
+      if(Object.entries(expected).every(([key,value])=>stored.pasteTyperSettings?.[key]===value))return stored;
+      await new Promise(resolve=>setTimeout(resolve,20));
+    }
+    throw Error('Settings did not finish saving');
+  };
   const settingsBefore=await worker.evaluate(()=>chrome.storage.local.get('pasteTyperSettings'));
   await page.evaluate(()=>{
     window.forgedReplies=[];
@@ -123,7 +131,7 @@ const server = http.createServer((req,res)=>{
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').waitFor({state:'visible'});
   console.log('PASS synthetic clicks/input and forged messages cannot route commands, save settings or close UI');
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('selection');
-  const stored=await worker.evaluate(()=>chrome.storage.local.get('pasteTyperSettings'));
+  const stored=await waitForSettings({text:'selection'});
   assert.equal(stored.pasteTyperSettings.text,'selection');
   const header=await page.locator('#paste-typer-floating-ui').locator('#header').boundingBox();
   await page.mouse.move(header.x+20,header.y+15);await page.mouse.down();
@@ -182,7 +190,7 @@ const server = http.createServer((req,res)=>{
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#textInput').inputValue(),'clipboard fixture');
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#speedSlider').inputValue(),'73');
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').inputValue(),'11');
-  const savedSettings=await worker.evaluate(()=>chrome.storage.local.get('pasteTyperSettings'));
+  const savedSettings=await waitForSettings({text:'clipboard fixture',speed:'73',typoChance:'11'});
   assert.deepEqual(savedSettings.pasteTyperSettings,{text:'clipboard fixture',speed:'73',typoChance:'11',rememberText:true});
   // Recreate, rather than just show, the panel to exercise storage loading too.
   await page.locator('#paste-typer-floating-ui').evaluate(host=>host.remove());
