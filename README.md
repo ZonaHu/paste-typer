@@ -32,7 +32,7 @@
 
 Some sites disable paste. Banking portals, exam platforms, government forms, "confirm your email" fields, admin panels that call `preventDefault()` on every paste event. You end up retyping a 40-character password or a long ID by hand.
 
-Paste Typer types it for you. It dispatches real `keydown` / `keypress` / `input` / `keyup` events one character at a time, with human-like timing, so the page sees typing instead of a paste.
+Paste Typer types it for you. It dispatches synthetic `keydown` / `keypress` / `input` / `keyup` events one character at a time, with human-like timing. Some editors reject these events; browser-trusted keyboard input cannot be created by JavaScript.
 
 ## Features
 
