@@ -1,4 +1,4 @@
-importScripts('frameRouter.js');
+importScripts('frameRouter.js', 'settings.js');
 
 if (typeof globalThis.PT_DEBUG === "undefined") {
   globalThis.PT_DEBUG = false;

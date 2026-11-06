@@ -7,6 +7,10 @@ const path = require('node:path');
 function setup() {
   const commands = [], writes = [], pageListeners = [], elements = new Map();
   let clipboardReads = 0;
+  let clipboardValue = 'clipboard text';
+  let saved = { text: 'selected text', speed: '50', typoChance: '5' };
+  const storageListeners = [];
+  const messageListeners = [];
   const window = {
     addEventListener(type, fn) { if (type === 'message') pageListeners.push(fn); },
     async postMessage(data) {
@@ -24,16 +28,25 @@ function setup() {
   } };
   const chrome = {
     runtime: {
-      onMessage: { addListener() {} },
+      onMessage: { addListener(fn) { messageListeners.push(fn); } },
+      getURL: p => `chrome-extension://test/${p}`,
       sendMessage: async request => {
+        if (request.action === 'ptSettings') {
+          return new Promise(resolve => messageListeners.forEach(fn => fn(request, { url: 'chrome-extension://test/popup.html' }, resolve)));
+        }
         assert.equal(request.action, 'ptRoute');
         return vm.runInContext('frameRouter', context).route(1, request.message);
       }
     },
-    storage: { local: {
-      get(keys, callback) { const value = { pasteTyperSettings: { text: 'selected text', speed: '50', typoChance: '5' } };
+    storage: { onChanged: { addListener(fn) { storageListeners.push(fn); } }, local: {
+      get(keys, callback) { const value = { pasteTyperSettings: structuredClone(saved) };
         callback?.(value); return Promise.resolve(value); },
-      async set(value) { writes.push(value); }
+      async set(value) {
+        const oldValue = saved;
+        saved = structuredClone(value.pasteTyperSettings);
+        writes.push(value);
+        storageListeners.forEach(fn => fn({ pasteTyperSettings: { oldValue, newValue: saved } }, 'local'));
+      }
     } },
     permissions: { contains: async () => true },
     scripting: { executeScript: async ({ target }) => target.allFrames ? [
@@ -48,13 +61,14 @@ function setup() {
   };
   const context = vm.createContext({ chrome, window, document: { addEventListener() {} },
     root, container, URL, Map, Set, console, setTimeout() {},
-    navigator: { clipboard: { async readText() { clipboardReads++; return 'clipboard text'; } } } });
+    navigator: { clipboard: { async readText() { clipboardReads++; return clipboardValue; } } } });
   // Exercise the production controller, content-script initialization and router.
-  for (const file of ['frameRouter.js', 'floating-ui.js', 'content.js']) {
+  for (const file of ['frameRouter.js', 'settings.js', 'floating-ui.js', 'content.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   const controller = vm.runInContext('new FloatingUIController(root, container)', context);
   return { commands, writes, window, root, container, controller,
+    deferClipboard() { let resolve; clipboardValue = new Promise(done => { resolve = done; }); return resolve; },
     clipboardReads: () => clipboardReads,
     async emit(id, type, isTrusted) {
       root.getElementById(id).listeners.get(type)({ isTrusted });
@@ -77,8 +91,9 @@ test('forged page messages cannot route typing or read/write extension settings'
 
 test('untrusted clicks/input and missing events cannot invoke privileged handlers', async () => {
   const state = setup();
-  for (const id of ['startTyping', 'stopTyping', 'loadClipboard', 'closeBtn']) await state.emit(id, 'click', false);
+  for (const id of ['startTyping', 'stopTyping', 'loadClipboard', 'closeBtn', 'deleteSavedText']) await state.emit(id, 'click', false);
   for (const id of ['textInput', 'speedSlider', 'typoChanceSlider']) await state.emit(id, 'input', false);
+  await state.emit('rememberText', 'change', false);
   await state.controller.startTyping(); await state.controller.stopTyping();
   await state.controller.loadFromClipboard(); await state.controller.saveSettings(); state.controller.close();
   assert.equal(state.commands.length, 0); assert.equal(state.writes.length, 0);
@@ -104,4 +119,32 @@ test('trusted clipboard, settings and close retain existing behavior', async () 
   assert.equal(state.writes.length, 2);
   assert.equal(state.writes[0].pasteTyperSettings.text, 'clipboard text');
   await state.emit('closeBtn', 'click', true); assert.equal(state.container.style.display, 'none');
+});
+
+
+test('deleting saved text cancels a clipboard read that was already pending', async () => {
+  const state = setup();
+  await state.controller.settingsReady;
+  const resolveRead = state.deferClipboard();
+  const pending = state.controller.loadFromClipboard({ isTrusted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  await state.controller.updateTextPrivacy('clearText');
+  resolveRead('old clipboard secret');
+  await pending;
+  assert.equal(state.root.getElementById('textInput').value, '');
+  assert.equal(state.writes.at(-1).pasteTyperSettings.text, undefined);
+});
+
+test('closing the floating panel discards private drafts and pending clipboard reads', async () => {
+  const state = setup();
+  await state.controller.settingsReady;
+  await state.controller.updateTextPrivacy('save', { rememberText: false });
+  state.root.getElementById('textInput').value = 'private draft';
+  const resolveRead = state.deferClipboard();
+  const pending = state.controller.loadFromClipboard({ isTrusted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  await state.emit('closeBtn', 'click', true);
+  resolveRead('private clipboard');
+  await pending;
+  assert.equal(state.root.getElementById('textInput').value, '');
 });

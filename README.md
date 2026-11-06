@@ -71,6 +71,11 @@ of the field. **Clear entire field** explicitly deletes all content in the selec
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 
+**Text privacy** — turn off **Remember text** in either UI to delete saved source
+and keep future text only in that open panel. You can still type it normally.
+**Delete saved text** removes saved source without resetting your preferences.
+Turning Remember text back on saves only text you enter afterward.
+
 **Embedded editors** — if the editor is hosted on another site, choose its site under
 "Allow access to an embedded editor's site" in the popup and click "Allow selected
 site". Only that site is requested; you can revoke access in Chrome's extension
@@ -119,7 +124,7 @@ No network requests. No analytics. No accounts.
 
 - The clipboard is read **only** when you click "Load from Clipboard" or use the context menu
 - No required host permissions — `activeTab` covers the main site's origin; embedded sites can be allowed individually
-- Settings live in `chrome.storage.local` (browser-local, not synced)
+- Settings live in `chrome.storage.local` (browser-local, not synced); source text can be excluded with Remember text
 
 Full details in [PRIVACY.md](PRIVACY.md).
 

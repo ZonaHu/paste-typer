@@ -55,6 +55,15 @@ selection replacement, input notifications, popup/floating controls, and explici
 Clear. Context-menu coverage exercises its frame-routing contract, not the native
 menu or clipboard permission UI.
 
+Text privacy controls have a disposable Chrome regression as well:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps node tests/settings.integration.cjs
+```
+
+It covers Remember text, saved-source deletion, reloads, popup/floating consistency,
+disabled-persistence typing, and forged page clicks.
+
 For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
 iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.

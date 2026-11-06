@@ -156,6 +156,7 @@ class PasteTyper {
         floatingContainer.style.display = 'block';
         this.loadFloatingUIPosition(floatingContainer);
       } else {
+        this.floatingUIController?.hide();
         floatingContainer.style.display = 'none';
       }
       return;

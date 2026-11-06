@@ -8,7 +8,12 @@ class FloatingUIController {
   constructor(root, container) {
     this.root = root;
     this.container = container;
+    this.textVersion = 0;
+    this.sourceRevision = 0;
+    this.rememberSourceText = true;
     this.textInput = root.getElementById('textInput');
+    this.rememberText = root.getElementById('rememberText');
+    this.deleteSavedText = root.getElementById('deleteSavedText');
     this.speedSlider = root.getElementById('speedSlider');
     this.speedValue = root.getElementById('speedValue');
     this.typoChanceSlider = root.getElementById('typoChanceSlider');
@@ -21,15 +26,42 @@ class FloatingUIController {
     this.status = root.getElementById('status');
 
     this.setupEventListeners();
-    this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
+    this.settingsReady = this.loadSettings().catch(error => this.showStatus('Failed to load settings: ' + error.message, 'error'));
   }
 
   setupEventListeners() {
+    // Synthetic checkbox/label clicks can generate a trusted change event.
+    // Cancel their default action before it reaches the preference handler.
+    this.root.getElementById('textPrivacy').addEventListener('click', event => {
+      if (event.isTrusted !== true) event.preventDefault();
+    }, true);
+    this.rememberText.addEventListener('change', event => {
+      if (event.isTrusted !== true) return;
+      this.updateTextPrivacy('save', { rememberText: this.rememberText.checked });
+    });
+    this.deleteSavedText.addEventListener('click', event => {
+      if (event.isTrusted !== true) return;
+      this.updateTextPrivacy('clearText');
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      const change = changes.pasteTyperSettings;
+      if (area !== 'local' || !change) return;
+      this.sourceRevision = change.newValue?.textRevision || 0;
+      const remember = change.newValue?.rememberText !== false;
+      if (this.rememberSourceText !== remember) this.textVersion++;
+      this.rememberSourceText = this.rememberText.checked = remember;
+      if (change.oldValue?.textRevision !== change.newValue?.textRevision ||
+          (change.oldValue && 'text' in change.oldValue && !('text' in (change.newValue || {}))) ||
+          (change.oldValue?.rememberText !== false && change.newValue?.rememberText === false)) {
+        this.textVersion++;
+        this.textInput.value = '';
+      }
+    });
     this.speedSlider.addEventListener('input', event => {
       if (event.isTrusted !== true) return;
       const speed = this.speedSlider.value;
       this.speedValue.textContent = `${speed}ms`;
-      this.saveSettings(event);
+      this.saveSettings(event, 'speed');
     });
 
     this.typoChanceSlider.addEventListener('input', event => {
@@ -37,7 +69,7 @@ class FloatingUIController {
       const value = parseInt(this.typoChanceSlider.value);
       const percentage = (value / 100).toFixed(1);
       this.typoChanceValue.textContent = `${percentage}%`;
-      this.saveSettings(event);
+      this.saveSettings(event, 'typoChance');
     });
 
     this.loadClipboardButton.addEventListener('click', event => {
@@ -57,17 +89,25 @@ class FloatingUIController {
     });
 
     this.textInput.addEventListener('input', event => {
-      this.saveSettings(event);
+      if (event.isTrusted !== true) return;
+      this.textEdited = true;
+      this.textVersion++;
+      this.saveSettings(event, 'text');
     });
   }
 
   async loadFromClipboard(event) {
     if (event?.isTrusted !== true) return;
     try {
+      const version = this.textVersion;
+      await this.settingsReady;
+      const revision = this.sourceRevision;
       this.showStatus('Loading from clipboard...', 'info');
       const text = await navigator.clipboard.readText();
+      if (version !== this.textVersion) return;
+      const saved = await this.settingsRequest('save', { text }, revision);
+      if (version !== this.textVersion || (saved.textRevision || 0) !== revision) return;
       this.textInput.value = text;
-      await this._saveSettings();
       this.showStatus('Clipboard text loaded', 'success');
     } catch (error) {
       this.showStatus('Failed to read clipboard: ' + error.message, 'error');
@@ -113,6 +153,12 @@ class FloatingUIController {
 
   close(event) {
     if (event?.isTrusted !== true) return;
+    this.hide();
+  }
+
+  hide() {
+    this.textVersion++;
+    if (!this.rememberSourceText) this.textInput.value = '';
     this.container.style.display = 'none';
   }
 
@@ -137,30 +183,48 @@ class FloatingUIController {
     }
   }
 
-  async saveSettings(event) {
+  async settingsRequest(operation, settings, textRevision = this.sourceRevision) {
+    const response = await chrome.runtime.sendMessage({ action: 'ptSettings', operation, settings, textRevision });
+    if (!response?.success) throw new Error(response?.error || 'Settings are unavailable.');
+    return response.settings;
+  }
+
+  async updateTextPrivacy(operation, settings) {
+    this.textVersion++;
+    try {
+      const saved = await this.settingsRequest(operation, settings);
+      this.rememberSourceText = this.rememberText.checked = saved.rememberText;
+      if (operation === 'clearText' || !saved.rememberText) this.textInput.value = '';
+      this.showStatus(operation === 'clearText' ? 'Saved text deleted' :
+        saved.rememberText ? 'New text will be remembered' : 'Text will no longer be saved', 'info');
+    } catch (error) {
+      this.showStatus('Failed to change text privacy: ' + error.message, 'error');
+    }
+  }
+
+  async saveSettings(event, field = 'text') {
     if (event?.isTrusted !== true) return;
     try {
-      await this._saveSettings();
+      await this._saveSettings(field);
     } catch (error) {
       this.showStatus('Failed to save settings: ' + error.message, 'error');
     }
   }
 
-  async _saveSettings() {
-    const settings = {
-      text: this.textInput.value,
-      speed: this.speedSlider.value,
-      typoChance: this.typoChanceSlider.value
-    };
-    await chrome.storage.local.set({ pasteTyperSettings: settings });
+  async _saveSettings(field) {
+    const values = { text: this.textInput.value, speed: this.speedSlider.value,
+      typoChance: this.typoChanceSlider.value };
+    await this.settingsRequest('save', { [field]: values[field] });
   }
 
   async loadSettings() {
-    const result = await chrome.storage.local.get(['pasteTyperSettings']);
-    const settings = result.pasteTyperSettings;
+    const settings = await this.settingsRequest('get');
+    this.sourceRevision = settings.textRevision || 0;
+    this.rememberSourceText = this.rememberText.checked = settings.rememberText;
+    this.rememberText.disabled = this.deleteSavedText.disabled = false;
 
     if (settings) {
-      if (settings.text) {
+      if (settings.rememberText && settings.text && !this.textEdited) {
         this.textInput.value = settings.text;
       }
 
