@@ -32,6 +32,11 @@
       }
     }
 
+    .text-privacy { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .text-privacy .remember-label { display: inline-flex; align-items: center; gap: 6px; margin: 0; flex: 1; }
+    .text-privacy input { width: auto; }
+    .text-privacy .btn { font-size: 11px; padding: 6px 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body, .pt-root {
@@ -187,6 +192,11 @@
     <div class="section">
       <label for="textInput">Text to type</label>
       <textarea id="textInput" class="text-area" placeholder="Enter text or load from clipboard..."></textarea>
+      <div class="text-privacy" id="textPrivacy">
+        <label class="remember-label"><input type="checkbox" id="rememberText" checked disabled> Remember text</label>
+        <button class="btn" id="deleteSavedText" type="button" disabled>Delete saved text</button>
+      </div>
+      <div class="help-text">Off deletes saved text. New text stays only while this panel is open.</div>
     </div>
 
     <div class="section">

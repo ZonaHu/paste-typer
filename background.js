@@ -1,4 +1,4 @@
-importScripts('content/typoRate.js', 'frameRouter.js');
+importScripts('content/typoRate.js', 'frameRouter.js', 'settings.js');
 
 if (typeof globalThis.PT_DEBUG === "undefined") {
   globalThis.PT_DEBUG = false;
