@@ -63,8 +63,21 @@ const server = http.createServer((req,res)=>{
   });
   await worker.evaluate(async tabId=>{await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>{if(typeof pasteTyper!=='undefined')pasteTyper.pauseChance=0;}});},tabId);
   const read=()=>editor.evaluate(()=>editors.map(e=>e.getValue().replace(/\r\n/g,'\n')));
-  const waitForEditorText=(index,text)=>editor.waitForFunction(({index,text})=>
-    editors[index].getValue().replace(/\r\n/g,'\n')===text,{index,text},{timeout:60000});
+  const waitForEditorText=async(index,text)=>{
+    try {
+      await editor.waitForFunction(({index,text})=>
+        editors[index].getValue().replace(/\r\n/g,'\n')===text,{index,text},{timeout:60000});
+    } catch(error) {
+      const diagnostic=await Promise.allSettled([
+        read(), route({action:'getTypingProgress'}), page.evaluate(()=>{
+          const root=document.getElementById('paste-typer-floating-ui')?.shadowRoot;
+          return {text:root?.getElementById('textInput')?.value,status:root?.getElementById('status')?.textContent};
+        })
+      ]);
+      console.error('Monaco fixture text mismatch', {expected:text,diagnostic});
+      throw error;
+    }
+  };
   const waitDone=async()=>{for(let i=0;i<1500;i++){const r=await route({action:'getTypingProgress'});if(!r.isTyping){assert.equal(r.error,null);return;}await new Promise(r=>setTimeout(r,30));}throw Error('typing timed out');};
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});await waitDone();
   assert.deepEqual(await read(),['abcXYZdef','SECOND']);assert.equal(await page.locator('#outside').inputValue(),'OUTSIDE');console.log('PASS cross-origin target + middle insertion + unrelated editor untouched');

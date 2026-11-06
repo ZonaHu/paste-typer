@@ -82,6 +82,10 @@ browser profile. Localhost permissions are pregranted only in the disposable
 extension copy, while permission denial is covered by the Node tests. The popup
 is represented by an extension-page tab whose tab query is pinned to the fixture.
 No test dependencies are needed to run or build the extension itself.
+Run the Chrome suites sequentially. Concurrent disposable Chrome runs produced
+intermittent model-wait timeouts during review; sequential Monaco 0.45/0.57 and
+forced-typo runs passed. The harness logs model, session, and panel state on a
+text mismatch so a future recurrence can be investigated.
 
 Floating UI controls run in the content script's isolated world. Changes to them
 must preserve the trusted-event checks: page scripts must not start/stop typing
