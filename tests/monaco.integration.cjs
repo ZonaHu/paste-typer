@@ -408,8 +408,17 @@ const server = http.createServer((req,res)=>{
   });
   const code='int main() {\n    // Вывод текста на экран\n    printf("Привет! Это простая программа на C.\\n");\n\n    int num1, num2, sum;\n\n    // Запрос ввода от пользователя\n    printf("Введите первое целое число: ");\n    scanf("%d", &num1);\n\n    printf("Введите второе целое число: ");\n    scanf("%d", &num2);\n\n    // Математическая операция\n    sum = num1 + num2;\n\n    // Вывод результата\n    printf("Сумма чисел %d и %d равна: %d\\n", num1, num2, sum);\n\n    return 0;\n}\n';
   await popup.locator('#textInput').fill(code);await popup.locator('#startTyping').click();
-  await popup.locator('#status').filter({hasText:'Typing started!'}).waitFor({timeout:3000});await waitDone();
-  assert.equal((await read())[0],code);console.log('PASS exact multiline C sample, auto-indent and auto-closing enabled');
+  try {
+    await editor.waitForFunction(text=>editors[0].getValue().replace(/\r\n/g,'\n')===text,code,{timeout:60000});
+    await waitDone();
+    assert.equal((await read())[0],code);
+  } catch(error) {
+    const diagnostic=await Promise.allSettled([read(),route({action:'getTypingProgress'}),
+      popup.evaluate(()=>({text:document.getElementById('textInput').value,status:document.getElementById('status').textContent}))]);
+    console.error('Monaco long-input mismatch',JSON.stringify({expected:code,diagnostic}));
+    throw error;
+  }
+  console.log('PASS exact multiline C sample, auto-indent and auto-closing enabled');
   const inputProof=await editor.evaluate(()=>({pasteCount,inputEvents,before:inputOptionsBefore,
     after:['autoIndent','autoClosingBrackets','autoClosingQuotes','autoClosingOvertype','autoSurround','formatOnType','acceptSuggestionOnEnter'].map(name=>editors[0].getOption(monaco.editor.EditorOption[name]))}));
   assert.equal(inputProof.pasteCount,0);assert.ok(inputProof.inputEvents.length>0);
