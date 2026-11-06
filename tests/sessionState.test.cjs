@@ -13,6 +13,7 @@ function setup() {
     const source = path.join(__dirname, '..', file);
     if (fs.existsSync(source)) vm.runInContext(fs.readFileSync(source, 'utf8'), context);
   }
+  context.GoogleDocsAdapter = class { static detect() { return false; } };
   const typer = vm.runInContext('pasteTyper', context);
   Object.assign(typer, { sessionId: 1, sessionState: 'running', isTyping: true,
     currentText: 'abcdef', currentGraphemes: ['a', 'b', 'c', 'd', 'e', 'f'], currentPosition: 0, pauseChance: 0, typoChance: 0,
