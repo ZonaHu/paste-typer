@@ -46,7 +46,8 @@ function setup({ autoAdvance = false } = {}) {
   const context = vm.createContext({ document, targetTracker: tracker,
     window: { HTMLInputElement: Input, getComputedStyle: () => ({ visibility: 'visible' }) },
     Event: DOMEvent, InputEvent: DOMEvent, KeyboardEvent: DOMEvent, setTimeout,
-    GoogleDocsAdapter: { detect: () => false }, MonacoAdapter: { detect: () => false } });
+    GoogleDocsAdapter: { detect: () => false }, MonacoAdapter: { detect: () => false },
+    CodeMirrorAdapter: { detect: () => false } });
   for (const file of ['inputAdapter', 'standardInputAdapter', 'splitCodeInputAdapter', 'adapterManager']) {
     const source = path.join(__dirname, `../content/${file}.js`);
     vm.runInContext(fs.readFileSync(source, 'utf8'), context);

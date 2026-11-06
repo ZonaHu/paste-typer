@@ -795,7 +795,7 @@ class PasteTyper {
       
       // Stop must wait for a Clear edit that has already been dispatched.
       const operation = (async () => {
-        if (adapter instanceof MonacoAdapter) {
+        if (typeof adapter?.reset === 'function') {
           await adapter.reset(elementToClear);
         } else {
           // Focus the element first and ensure it's ready

@@ -25,6 +25,7 @@ class AdapterManager {
   }
 
   getAdapter(element = targetTracker.getTarget() || document.activeElement) {
+    if (CodeMirrorAdapter.detect(element)) return new CodeMirrorAdapter();
     if (MonacoAdapter.detect(element)) return new MonacoAdapter();
     debug.log('[AdapterManager] Checking adapters...');
     for (const AdapterClass of this.adapters) {
