@@ -2,7 +2,11 @@
 // is only a view, so edits go through the selected view's transaction API.
 class CodeMirrorAdapter extends InputAdapter {
   static detect(element) {
-    return !!element?.closest('.cm-content')?.closest('.cm-editor');
+    const content = element?.closest('.cm-content');
+    // Widgets may contain independent native fields or editing hosts. Their
+    // nearest owner must remain the target, rather than the surrounding model.
+    return !!content?.closest('.cm-editor') &&
+      element.closest('input, textarea, select, [contenteditable]') === content;
   }
 
   async getTarget() {

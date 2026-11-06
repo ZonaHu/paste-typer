@@ -9,7 +9,8 @@ function setupAdapter() {
   let tokenNumber = 0;
   const attributes = new Map();
   const content = { isConnected: true, isContentEditable: true,
-    closest: selector => selector === '.cm-content' ? content : selector === '.cm-editor' ? {} : null,
+    closest: selector => selector === '.cm-content' || selector === 'input, textarea, select, [contenteditable]'
+      ? content : selector === '.cm-editor' ? {} : null,
     setAttribute: (name, value) => attributes.set(name, value),
     getAttribute: name => attributes.get(name),
     removeAttribute: name => attributes.delete(name) };
@@ -19,6 +20,8 @@ function setupAdapter() {
     targetTracker: { getTarget: () => child },
     chrome: { runtime: { sendMessage: async request => { requests.push(request); return { success: true }; } } },
     GoogleDocsAdapter: class { static detect() { return false; } },
+    SplitCodeInputAdapter: class { static detect() { return false; } },
+    ProseMirrorAdapter: class { static detect() { return false; } },
     StandardInputAdapter: class { static detect() { return true; } }, MonacoAdapter: class { static detect() { return false; } } });
   for (const name of ['inputAdapter.js', 'codeMirrorAdapter.js', 'adapterManager.js']) {
     const file = path.join(__dirname, '../content', name);
@@ -32,6 +35,17 @@ test('selected CodeMirror descendants resolve to their editor content, not the s
   const { adapter, content } = setupAdapter();
   assert.equal(adapter.constructor.name, 'CodeMirrorAdapter');
   assert.equal((await adapter.getTarget()).element, content);
+});
+
+test('independent widget inputs and contenteditable hosts keep their own adapter', () => {
+  const { context, content } = setupAdapter();
+  const manager = vm.runInContext('adapterManager', context);
+  for (const tagName of ['INPUT', 'TEXTAREA', 'DIV']) {
+    const host = { tagName };
+    const target = { closest: selector => selector === 'input, textarea, select, [contenteditable]'
+      ? host : content.closest(selector) };
+    assert.equal(manager.getAdapter(target).constructor.name, 'StandardInputAdapter', tagName);
+  }
 });
 
 test('CodeMirror operations use fresh scoped runtime requests and always remove the target marker', async () => {

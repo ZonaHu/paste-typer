@@ -23,8 +23,18 @@ fs.writeFileSync(path.join(extension, 'manifest.json'), JSON.stringify(manifest)
 const fixture = esbuild.buildSync({ bundle: true, write: false, format: 'iife',
   nodePaths: [path.join(editorDependencies, 'node_modules')], stdin: { resolveDir: editorDependencies, contents: `
 import { EditorState, EditorSelection, Transaction } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
+import { EditorView, keymap, Decoration, WidgetType } from '@codemirror/view';
 import { history, historyKeymap, undo, redo } from '@codemirror/commands';
+class InputWidget extends WidgetType {
+  toDOM() {
+    const wrapper = document.createElement('span'); wrapper.contentEditable = 'false';
+    const input = document.createElement('input'); input.id = 'widget-input'; input.value = 'INPUT';
+    const textarea = document.createElement('textarea'); textarea.id = 'widget-textarea'; textarea.value = 'TEXTAREA';
+    const rich = document.createElement('span'); rich.id = 'widget-rich'; rich.contentEditable = 'true'; rich.tabIndex = 0;
+    rich.innerHTML = '<span>RICH</span>'; wrapper.append(input, textarea, rich); return wrapper;
+  }
+}
+window.makeHostState = doc => EditorState.create({doc});
 window.editors = []; window.transactions = [];
 window.resetEditor = (index, doc, selection, options = {}) => {
   const extensions = [history(), keymap.of(historyKeymap), EditorState.allowMultipleSelections.of(true),
@@ -35,6 +45,8 @@ window.resetEditor = (index, doc, selection, options = {}) => {
         transactions.push({index, changes, event: tr.annotation(Transaction.userEvent)});
       }
     })];
+  if (options.widgets) extensions.push(EditorView.decorations.of(Decoration.set([
+    Decoration.widget({widget: new InputWidget(), side: 1}).range(2)])));
   if (options.reject) extensions.push(EditorState.transactionFilter.of(tr => tr.docChanged ? [] : tr));
   if (options.lineBreak) extensions.push(EditorState.lineSeparator.of(options.lineBreak));
   const state = EditorState.create({doc, selection: Array.isArray(selection)
@@ -127,6 +139,25 @@ const server = http.createServer((req, res) => {
     assert.equal((await read())[0].text, 'abcXYZdef');
     console.log('PASS engine types one transaction per character in selected cross-origin editor; Undo/Redo preserve model and caret');
 
+    await reset(0, 'abcdef', { anchor: 3 }, { widgets: true });
+    for (const [selector, initial] of [['#widget-input', 'INPUT'], ['#widget-textarea', 'TEXTAREA'], ['#widget-rich', 'RICH']]) {
+      await editor.locator(selector).click();
+      if (selector === '#widget-rich') {
+        await editor.locator(selector).evaluate(element => {
+          const range = document.createRange(); range.selectNodeContents(element); range.collapse(true);
+          const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); element.focus();
+        });
+      } else await editor.locator(selector).press('Home');
+      assert.equal(await isolated('adapterName'), 'StandardInputAdapter', selector + ' ' + JSON.stringify(
+        await editor.locator(selector).evaluate(element => ({ active: document.activeElement.id, editable: element.isContentEditable,
+          nearest: element.closest('input, textarea, select, [contenteditable]')?.id }))));
+      await start('X');
+      const value = await editor.locator(selector).evaluate(element => element.value ?? element.textContent);
+      assert.equal(value, 'X' + initial);
+      assert.deepEqual((await read()).map(item => item.text), ['abcdef', 'SECOND']);
+    }
+    console.log('PASS independent native and contenteditable widget inputs retain their adapter and never edit the CodeMirror model');
+
     await reset(0, 'a😀bc', { anchor: 4, head: 1 });
     assert.equal((await direct('type', '界')).success, true);
     assert.deepEqual((await read()).map(item => item.text), ['a界c', 'SECOND']);
@@ -195,6 +226,37 @@ const server = http.createServer((req, res) => {
     assert.equal(await editor.locator('[data-paste-typer-target]').count(), 0);
     await editor.evaluate(() => { editors[0].dispatch = originalDispatch; });
     console.log('PASS ignored or throwing dispatch fails and removes temporary target marker');
+
+    for (const mode of ['restore', 'rewrite', 'remove']) {
+      await reset(0, 'abc', { anchor: 1 });
+      await editor.evaluate(mode => {
+        const view = editors[0]; window.hostDispatch = view.dispatch;
+        view.dispatch = (...specs) => {
+          const before = view.state; hostDispatch(...specs);
+          if (!view.state.doc.eq(before.doc)) queueMicrotask(() => {
+            if (mode === 'restore') view.setState(before);
+            if (mode === 'rewrite') view.setState(makeHostState('HOST'));
+            if (mode === 'remove') view.dom.remove();
+          });
+        };
+      }, mode);
+      const result = await direct('type', 'X');
+      assert.equal(result.success, false, mode + ' must not report accepted input');
+      if (mode === 'restore') {
+        const started = await route({ action: 'startTyping', text: 'X', speed: 10, typoChance: 0, targetElement: true });
+        assert.equal(started.success, true, started.error);
+        assert.equal((await waitDone(/did not accept/)).position, 0);
+      }
+      assert.equal((await read())[0].text, mode === 'restore' ? 'abc' : mode === 'rewrite' ? 'HOST' : 'aXbc');
+      assert.equal((await read())[1].text, 'SECOND');
+      assert.equal(await editor.locator('[data-paste-typer-target]').count(), 0);
+      await editor.evaluate(() => {
+        editors[0].dispatch = hostDispatch;
+        if (!editors[0].dom.isConnected) document.getElementById('one').appendChild(editors[0].dom);
+      });
+    }
+    await reset(0, 'abc', { anchor: 1 });
+    console.log('PASS queued host restoration, rewriting and target removal report failure after dispatch settles');
 
     await editor.evaluate(() => {
       const content = editors[0].contentDOM;

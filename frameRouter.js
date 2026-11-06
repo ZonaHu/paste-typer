@@ -229,17 +229,29 @@ function simulateMonacoInput(token, text) {
 // CodeMirror 6.36 exposes cmView; 6.41 uses cmTile. These page-owned DOM
 // expandos are hidden from isolated content scripts. Resolve the public view
 // API from that one element, then verify its identity before dispatching.
-function editCodeMirror(token, operation, text) {
+async function editCodeMirror(token, operation, text) {
   try {
-    const matches = Array.from(document.querySelectorAll('.cm-content'))
-      .filter(element => element.getAttribute('data-paste-typer-target') === token);
-    const element = matches.length === 1 ? matches[0] : null;
-    const candidate = element?.cmView?.rootView?.view || element?.cmTile?.root?.view;
-    const view = candidate?.constructor?.findFromDOM?.(element);
-    if (!element?.isConnected || element.ownerDocument !== document || !view || view !== candidate ||
-        view.contentDOM !== element || view.dom !== element.closest('.cm-editor') || view.root !== document) {
+    const resolveTarget = () => {
+      const matches = Array.from(document.querySelectorAll('.cm-content'))
+        .filter(element => element.getAttribute('data-paste-typer-target') === token);
+      const element = matches.length === 1 ? matches[0] : null;
+      const candidate = element?.cmView?.rootView?.view || element?.cmTile?.root?.view;
+      const view = candidate?.constructor?.findFromDOM?.(element);
+      return element?.isConnected && element.ownerDocument === document && view && view === candidate &&
+        view.contentDOM === element && view.dom === element.closest('.cm-editor') && view.root === document
+        ? { element, view } : null;
+    };
+    const selected = resolveTarget();
+    if (!selected) {
       return { success: false, error: 'Cannot access the selected CodeMirror editor. No text was inserted.' };
     }
+    const { element, view } = selected;
+    const isCurrent = () => {
+      const current = resolveTarget();
+      return current?.element === element && current.view === view;
+    };
+    const unavailable = () => ({ success: false,
+      error: 'The selected CodeMirror editor changed or was removed before the edit was confirmed.' });
     let state = view.state;
     if (state.readOnly || !element.isContentEditable) {
       return { success: false, error: 'The selected CodeMirror editor is not editable.' };
@@ -248,7 +260,8 @@ function editCodeMirror(token, operation, text) {
       // Model selection survives blur. Restoring a DOM Range could overwrite it
       // or point at a line CodeMirror replaced during its last redraw.
       view.focus();
-      return { success: true };
+      await Promise.resolve();
+      return isCurrent() ? { success: true } : unavailable();
     }
     let spec;
     if (operation === 'type') {
@@ -263,6 +276,8 @@ function editCodeMirror(token, operation, text) {
       // keeps Clear separate from the preceding typing group in native history.
       const selection = state.selection.constructor.single(0, state.doc.length);
       view.dispatch({ selection, userEvent: 'select' });
+      await Promise.resolve();
+      if (!isCurrent()) return unavailable();
       if (!view.state.selection.eq(selection)) {
         return { success: false, error: 'The selected CodeMirror editor did not accept Select All.' };
       }
@@ -273,6 +288,10 @@ function editCodeMirror(token, operation, text) {
     const expectedSelection = spec.selection;
     const userEvent = operation === 'type' ? 'input.type' : operation === 'backspace' ? 'delete.backward' : 'delete.selection';
     view.dispatch({ ...spec, userEvent, scrollIntoView: true });
+    // Hosts may restore controlled state or remove this view in a microtask.
+    // Confirm after that work, before the typing engine advances its progress.
+    await Promise.resolve();
+    if (!isCurrent()) return unavailable();
     // Respect transaction filters and host dispatchers, but do not report an
     // ignored/rewritten edit as successful and advance past missing text.
     if (!view.state.doc.eq(expectedDoc) || !view.state.selection.eq(expectedSelection)) {

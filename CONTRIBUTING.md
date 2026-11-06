@@ -100,7 +100,8 @@ libraries only for its local page; the shipped extension has no dependencies.
 It verifies model text and UTF-16 selection offsets, per-character transactions,
 reversed selections, full Unicode graphemes, multiple carets, literal newlines,
 configured line separators, native Undo/Redo, explicit Clear, read-only/filter
-rejection, interrupted dispatch, stale view metadata, unrelated-editor safety,
+rejection, queued host restoration/rewriting/removal, interrupted dispatch, stale
+view metadata, independent widget inputs, unrelated-editor safety,
 forged page events, cross-origin routing, popup/floating controls, Stop and removal.
 The typing engine's Unicode segmentation is tested separately; the adapter's
 full-grapheme cases invoke its real runtime bridge directly. Lone UTF-16
