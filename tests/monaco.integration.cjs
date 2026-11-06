@@ -7,6 +7,8 @@ const root = path.resolve(__dirname, '..');
 const dependencies = path.resolve(process.env.PT_TEST_DEPS || path.join(root, '.local-analysis/harness'));
 const { chromium } = require(path.join(dependencies, 'node_modules/playwright'));
 const monacoRoot = path.join(path.resolve(process.env.PT_MONACO_DEPS || dependencies), 'node_modules/monaco-editor');
+const nativeEditContext = process.env.PT_NATIVE_EDIT_CONTEXT === '1';
+const inputSelector = nativeEditContext ? '.native-edit-context' : 'textarea.inputarea';
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'paste-typer-test-'));
 const extension = path.join(scratch, 'extension');
 fs.mkdirSync(extension, {recursive:true});
@@ -22,7 +24,7 @@ fs.writeFileSync(path.join(extension,'manifest.json'), JSON.stringify(manifest))
 const editorHtml = `<!doctype html><html><body><div id="one" style="height:250px"></div><div id="two" style="height:250px"></div>
 <script src="/vs/loader.js"></script><script>
 require.config({paths:{vs:'/vs'}});require(['vs/editor/editor.main'],function(){
-window.editors=[monaco.editor.create(document.getElementById('one'),{value:'abcdef',language:'plaintext',automaticLayout:true,editContext:false}),monaco.editor.create(document.getElementById('two'),{value:'SECOND',language:'plaintext',automaticLayout:true,editContext:false})];
+window.editors=[monaco.editor.create(document.getElementById('one'),{value:'abcdef',language:'plaintext',automaticLayout:true,editContext:${nativeEditContext}}),monaco.editor.create(document.getElementById('two'),{value:'SECOND',language:'plaintext',automaticLayout:true,editContext:${nativeEditContext}})];
 editors[0].setPosition({lineNumber:1,column:4});editors[0].focus();window.ready=true;
 });</script></body></html>`;
 const server = http.createServer((req,res)=>{
@@ -46,6 +48,8 @@ const server = http.createServer((req,res)=>{
   const worker=context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', {timeout:5000});
   const page=await context.newPage(); await page.goto(`http://127.0.0.1:${port}/`);
   const editor=page.frame({url:new RegExp('/editor$')}); await editor.waitForFunction(()=>window.ready);
+  if(nativeEditContext) assert.equal(await editor.locator(inputSelector).first().evaluate(input=>
+    input.editContext instanceof EditContext && typeof TextUpdateEvent === 'function'),true);
   const tabId=await worker.evaluate(async()=>{const tabs=await chrome.tabs.query({});return tabs.find(t=>t.url?.startsWith('http://127.0.0.1:')).id;});
   const route=(message)=>worker.evaluate(({tabId,message})=>frameRouter.route(tabId,message),{tabId,message});
   const prepare=()=>worker.evaluate(tabId=>frameRouter.prepare(tabId).then(r=>r.available.map(f=>({frameId:f.frameId,info:f.info}))),tabId);
@@ -54,6 +58,7 @@ const server = http.createServer((req,res)=>{
       files:PT_CONTENT_FILES.filter(file=>file!=='floating-ui.js')}),tabId);
   }
   await prepare();
+  assert.equal((await route({action:'getActiveElement'})).isEditable,true);
   await worker.evaluate(()=>{
     globalThis.testRoutedCommands=[];
     const original=frameRouter.route.bind(frameRouter);
@@ -67,8 +72,12 @@ const server = http.createServer((req,res)=>{
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});await waitDone();
   assert.deepEqual(await read(),['abcXYZdef','SECOND']);assert.equal(await page.locator('#outside').inputValue(),'OUTSIDE');console.log('PASS cross-origin target + middle insertion + unrelated editor untouched');
   await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','undo');});assert.equal((await read())[0],'abcdef');console.log('PASS undo');
+  await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','redo');});
+  assert.equal((await read())[0],'abcXYZdef');
+  await editor.evaluate(()=>{for(let i=0;i<3;i++)editors[0].trigger('test','undo');});
+  assert.equal((await read())[0],'abcdef');console.log('PASS redo and undo retain the inserted text');
   await editor.evaluate(()=>editors[1].setSelection({startLineNumber:1,startColumn:2,endLineNumber:1,endColumn:5}));
-  await editor.locator('#two textarea.inputarea').focus();
+  await editor.locator(`#two ${inputSelector}`).focus();
   const commandCount=()=>worker.evaluate(()=>testRoutedCommands.length);
   const startCount=()=>worker.evaluate(()=>testRoutedCommands.filter(action=>action==='startTyping').length);
   const forgeMessages=()=>page.evaluate(()=>{
@@ -139,14 +148,14 @@ const server = http.createServer((req,res)=>{
   assert.equal(await startCount()-baseline,1);
   assert.deepEqual(await read(),['abcdef','SselectionND']);console.log('PASS floating UI retains selected editor and selection');
   await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));
-  await editor.locator('#two textarea.inputarea').focus();
+  await editor.locator(`#two ${inputSelector}`).focus();
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('K');
   await page.locator('#paste-typer-floating-ui').locator('#speedSlider').fill('10');
   await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').fill('0');
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').press('Enter');
   await page.locator('#paste-typer-floating-ui').locator('#status').filter({hasText:'Typing started!'}).waitFor();await waitDone();
   assert.equal((await read())[1],'SKselectionND');console.log('PASS trusted keyboard activation starts typing');
-  await editor.locator('#two textarea.inputarea').focus();
+  await editor.locator(`#two ${inputSelector}`).focus();
   await page.locator('#paste-typer-floating-ui').locator('#textInput').fill('R'.repeat(200));
   await page.locator('#paste-typer-floating-ui').locator('#speedSlider').fill('25');
   await page.locator('#paste-typer-floating-ui').locator('#startTyping').click();
@@ -192,14 +201,14 @@ const server = http.createServer((req,res)=>{
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').inputValue(),'11');
   console.log('PASS clipboard handler and settings persist through close/reopen and panel recreation');
   await editor.evaluate(()=>{editors[1].setValue('SselectionND');editors[1].setPosition({lineNumber:1,column:2});});
-  await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));await editor.locator('#two textarea.inputarea').focus();
+  await editor.evaluate(()=>editors[1].setPosition({lineNumber:1,column:2}));await editor.locator(`#two ${inputSelector}`).focus();
   await route({action:'startTyping',text:'\nQ',speed:10,typoChance:0,targetElement:true});await waitDone();assert.equal((await read())[1],'S\nQselectionND');console.log('PASS newline');
   // Real native key handling for typo correction.
   await route({action:'startTyping',text:'abcdefghij',speed:10,typoChance:1,targetElement:true});await waitDone();assert.ok((await read())[1].includes('QabcdefghijselectionND'));console.log('PASS forced typo + backspace corrections');
   await route({action:'resetTyping'});assert.equal((await read())[1],'');assert.equal((await read())[0],'abcdef');console.log('PASS explicit clear only selected Monaco');
   // Repeated discovery does not redeclare classes or duplicate UI listeners.
   await Promise.all([prepare(),prepare(),prepare()]);console.log('PASS concurrent/repeated injection');
-  await editor.locator('#one textarea.inputarea').focus();
+  await editor.locator(`#one ${inputSelector}`).focus();
   await editor.evaluate(()=>editors[0].setPosition({lineNumber:1,column:3}));
   const popup=await context.newPage();await popup.goto(`chrome-extension://${extensionInfo.id}/popup.html`);
   // A headless extension-page tab is itself "active"; the test scope pins tabs
@@ -222,8 +231,9 @@ const server = http.createServer((req,res)=>{
     const names=['autoIndent','autoClosingBrackets','autoClosingQuotes','autoClosingOvertype','autoSurround','formatOnType','acceptSuggestionOnEnter'];
     window.inputOptionsBefore=names.map(name=>editors[0].getOption(monaco.editor.EditorOption[name]));
     window.inputEvents=[];window.pasteCount=0;
-    const input=editors[0].getDomNode().querySelector('textarea.inputarea');
-    input.addEventListener('input',event=>inputEvents.push(event.inputType));
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    if(input.editContext) input.editContext.addEventListener('textupdate',()=>inputEvents.push('insertText'));
+    else input.addEventListener('input',event=>inputEvents.push(event.inputType));
     input.addEventListener('paste',()=>pasteCount++);
     // Prove this path uses editor input handlers, never direct executeEdits.
     editors[0].executeEdits=()=>{throw Error('Direct model edits are prohibited by this test');};
@@ -237,20 +247,61 @@ const server = http.createServer((req,res)=>{
   assert.equal(inputProof.pasteCount,0);assert.ok(inputProof.inputEvents.length>0);
   assert.ok(inputProof.inputEvents.every(type=>type==='insertText'));
   assert.deepEqual(inputProof.after,inputProof.before);console.log('PASS simulated input only, no paste/model edits, editor options restored');
+  if(nativeEditContext){
+    await page.bringToFront();await editor.locator(`#one ${inputSelector}`).focus();
+    await page.keyboard.type('!');assert.equal((await read())[0],code+'!');
+    await page.keyboard.press('Backspace');assert.equal((await read())[0],code);
+    console.log('PASS native keyboard input remains correct after simulated typing');
+  }
   await editor.evaluate(()=>{
     editors[0].setValue('UNCHANGED');editors[0].setPosition({lineNumber:1,column:1});editors[0].focus();
     window.blockKey=event=>{if(event.key==='X')event.preventDefault();};
-    editors[0].getDomNode().querySelector('textarea.inputarea').addEventListener('keydown',blockKey,true);
+    editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context').addEventListener('keydown',blockKey,true);
   });
   await route({action:'startTyping',text:'XYZ',speed:10,typoChance:0,targetElement:true});
   let failed;
   for(let i=0;i<100;i++){failed=await route({action:'getTypingProgress'});if(!failed.isTyping)break;await new Promise(r=>setTimeout(r,30));}
   assert.ok(failed.error.includes('intercepted'));assert.equal((await read())[0],'UNCHANGED');
   const afterFailure=await editor.evaluate(()=>{
-    editors[0].getDomNode().querySelector('textarea.inputarea').removeEventListener('keydown',blockKey,true);
+    editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context').removeEventListener('keydown',blockKey,true);
     return ['autoIndent','autoClosingBrackets','autoClosingQuotes','autoClosingOvertype','autoSurround','formatOnType','acceptSuggestionOnEnter'].map(name=>editors[0].getOption(monaco.editor.EditorOption[name]));
   });
   assert.deepEqual(afterFailure,inputProof.before);console.log('PASS intercepted input fails, preserves text and restores options');
+  if(nativeEditContext){
+    const nativeBefore=await editor.evaluate(()=>{
+      const context=editors[0].getDomNode().querySelector('.native-edit-context').editContext;
+      // EditContext is a plain EventTarget with no DOM capture ancestry. Drop
+      // this one event at its dispatch boundary to simulate a rejected input.
+      window.nativeDispatch=context.dispatchEvent;
+      context.dispatchEvent=event=>event.type==='textupdate' ? true : nativeDispatch.call(context,event);
+      return {text:context.text,start:context.selectionStart,end:context.selectionEnd};
+    });
+    await route({action:'startTyping',text:'Z',speed:10,typoChance:0,targetElement:true});
+    for(let i=0;i<100;i++){failed=await route({action:'getTypingProgress'});if(!failed.isTyping)break;await new Promise(r=>setTimeout(r,30));}
+    assert.match(failed.error,/did not accept/);assert.equal((await read())[0],'UNCHANGED');
+    const nativeAfter=await editor.evaluate(()=>{
+      const context=editors[0].getDomNode().querySelector('.native-edit-context').editContext;
+      context.dispatchEvent=nativeDispatch;
+      return {text:context.text,start:context.selectionStart,end:context.selectionEnd};
+    });
+    assert.deepEqual(nativeAfter,nativeBefore);
+    console.log('PASS rejected native text restores its input buffer and reports model rejection');
+  }
+  await editor.evaluate(()=>editors[0].updateOptions({readOnly:true}));
+  const readOnlyClear=await route({action:'resetTyping'});
+  assert.equal(readOnlyClear.success,false);assert.match(readOnlyClear.error,/not editable/);
+  assert.equal((await read())[0],'UNCHANGED');
+  await editor.evaluate(()=>editors[0].updateOptions({readOnly:false}));
+  console.log('PASS Clear rejects a read-only Monaco model');
+  await editor.evaluate(()=>{
+    const input=editors[0].getDomNode().querySelector('textarea.inputarea, .native-edit-context');
+    input.addEventListener('keydown',()=>input.remove(),{once:true});editors[0].focus();
+  });
+  await route({action:'startTyping',text:'R',speed:10,typoChance:0,targetElement:true});
+  for(let i=0;i<100;i++){failed=await route({action:'getTypingProgress'});if(!failed.isTyping)break;await new Promise(r=>setTimeout(r,30));}
+  assert.match(failed.error,/removed|no longer/);assert.equal((await read())[0],'UNCHANGED');
+  assert.equal((await read())[1],'');
+  console.log('PASS removal during a key event cannot insert into a detached editor');
   await worker.evaluate(tabId=>chrome.scripting.executeScript({target:{tabId,frameIds:[0]},world:'ISOLATED',func:()=>{
     // Force failure after markup import, as in the reported missing controller.
     FloatingUIController=class { constructor(){throw Error('fixture controller initialization failure');} };

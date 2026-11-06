@@ -55,8 +55,8 @@ selection replacement, input notifications, popup/floating controls, and explici
 Clear. Context-menu coverage exercises its frame-routing contract, not the native
 menu or clipboard permission UI.
 
-For Monaco changes, also test a textarea-based Monaco editor in a cross-origin
-iframe: grant only the editor site's optional access, select a caret or range,
+For Monaco changes, also test textarea and native EditContext Monaco editors in
+a cross-origin iframe: grant only the editor site's optional access, select a caret or range,
 open each UI, and verify exact text, Undo/Redo, and that another editor is untouched.
 Check permission denial and iframe navigation/removal. Do not rely on Monaco's
 hidden textarea value to verify the document; verify its model or visible content.
@@ -76,8 +76,12 @@ PT_TEST_DEPS=/path/to/test-deps node tests/monaco.integration.cjs
 ```
 
 On PowerShell, set `$env:PT_TEST_DEPS` before running Node. Repeat with
-`monaco-editor@0.57.0` (install both packages again). The harness uses a disposable
-Chrome profile and local cross-origin editor fixture; it never loads your normal
+`monaco-editor@0.57.0` (install both packages again). With 0.57, also set
+`PT_NATIVE_EDIT_CONTEXT=1` to exercise the real native EditContext surface,
+model acceptance/rejection, subsequent native keyboard input, and read-only Clear.
+Native support still requires the site to expose `window.monaco`; a local fixture
+is not evidence that a particular hosted editor such as github.dev exposes that API.
+The harness uses a disposable Chrome profile and local cross-origin editor fixture; it never loads your normal
 browser profile. Localhost permissions are pregranted only in the disposable
 extension copy, while permission denial is covered by the Node tests. The popup
 is represented by an extension-page tab whose tab query is pinned to the fixture.

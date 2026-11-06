@@ -18,6 +18,8 @@ class TargetTracker {
       return !element.disabled && !element.readOnly &&
         ['text', 'email', 'password', 'search', 'url', 'tel', 'textarea', ''].includes(element.type);
     }
+    if (element.classList?.contains('native-edit-context') && element.closest('.monaco-editor') &&
+        typeof EditContext === 'function' && element.editContext instanceof EditContext) return true;
     return element.isContentEditable;
   }
 
@@ -25,7 +27,10 @@ class TargetTracker {
     if (!this.isEditable(element)) return;
     this.element = element;
     this.changedAt = Date.now();
-    if (typeof element.selectionStart === 'number') {
+    if (element.classList?.contains('native-edit-context')) {
+      // Native Monaco owns selection in its model/EditContext, not a DOM Range.
+      this.selection = null;
+    } else if (typeof element.selectionStart === 'number') {
       this.selection = { start: element.selectionStart, end: element.selectionEnd,
         direction: element.selectionDirection };
     } else {

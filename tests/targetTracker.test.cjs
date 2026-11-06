@@ -3,10 +3,12 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
+class FixtureEditContext {}
 
 function setup() {
   const document = { activeElement: null, addEventListener() {} };
-  const context = vm.createContext({ document, Date, window: { getSelection() { return { rangeCount: 0 }; } } });
+  const context = vm.createContext({ document, Date, EditContext: FixtureEditContext,
+    window: { getSelection() { return { rangeCount: 0 }; } } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../content/targetTracker.js'), 'utf8'), context);
   return vm.runInContext('targetTracker', context);
 }
@@ -31,4 +33,26 @@ test('removed or read-only targets are invalidated', () => {
   const tracker = setup(); const editor = input();
   tracker.capture(editor); editor.isConnected = false; assert.equal(tracker.getTarget(), null);
   editor.isConnected = true; editor.readOnly = true; assert.equal(tracker.getTarget(), null);
+});
+
+test('native Monaco targets are retained without replacing their editor-managed selection', () => {
+  const tracker = setup();
+  const editor = { tagName: 'DIV', isConnected: true, editContext: new FixtureEditContext(),
+    classList: { contains: name => name === 'native-edit-context' },
+    closest: selector => selector === '.monaco-editor' ? {} : null,
+    focus() { this.focused = true; } };
+  tracker.capture(editor);
+  assert.equal(tracker.getTarget(), editor);
+  tracker.restore(editor);
+  assert.equal(editor.focused, true);
+  editor.editContext = null;
+  assert.equal(tracker.getTarget(), null);
+});
+
+test('a native-editor class without an actual EditContext is not an editable target', () => {
+  const tracker = setup();
+  const impostor = { tagName: 'DIV', isConnected: true,
+    classList: { contains: () => true }, closest: () => null };
+  tracker.capture(impostor);
+  assert.equal(tracker.getTarget(), null);
 });

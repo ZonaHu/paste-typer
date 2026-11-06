@@ -366,6 +366,9 @@ class PasteTyper {
 
 
   isEditableElement(element) {
+    if (typeof MonacoAdapter !== 'undefined' && MonacoAdapter.detect(element)) {
+      return targetTracker.isEditable(element);
+    }
     const editableTags = ['INPUT', 'TEXTAREA'];
     const editableTypes = ['text', 'email', 'password', 'search', 'url', 'tel'];
     
