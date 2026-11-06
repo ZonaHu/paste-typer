@@ -51,6 +51,36 @@ the important assertions are no field mutation during the reload, preserved
 settings, and successful operation on refreshed/new pages. All temporary files
 and the disposable browser are removed when the harness exits.
 
+## Combined release-candidate replay
+
+The combined runtime at `a910606bdf4fe778e80982ae707ebbf3a195ed5a` was replayed
+on the same Chrome 156.0.8078.80 / Darwin 25.5.0 environment. Both historical
+`64198da` (1.1.1) and pre-change main
+`f3ca1d13ff1f3b3d73d7f296dd8f36acc0a70aba` (1.1.2) passed the expanded unpacked
+reload harness. This is a code-upgrade simulation; the candidate still declares
+1.1.2 and requires a version increase before a Store submission.
+
+The real legacy settings shape now contains harmless saved Unicode source,
+speed 35 and typo-rate value 5. The extension ID, source, preferences and storage
+marker survive. The popup and floating panel wait for loaded values, and the
+combined percentage label reads 5%. On already-open, refreshed and new pages,
+Navigate, exact caret insertion, Stop and trusted floating Start pass while an
+unrelated field remains unchanged. The independent investigation branch also
+passes the expanded harness without requiring the other feature branches.
+
+Two harness races were corrected during this replay: an initially checked
+checkbox is not evidence that settings have loaded, and stopped progress from
+the previous session is not completion of a new asynchronous floating Start.
+The harness now polls exact saved settings and delivered field text. These
+changes add test coverage; they do not change the production extension or prove
+Store delivery, disabled-profile recovery, or another OS/Chrome version.
+
+To replay from the pre-change main instead of the default 1.1.1 revision:
+
+```bash
+PT_TEST_DEPS=/path/to/test-deps PT_UPGRADE_OLD_REF=f3ca1d13ff1f3b3d73d7f296dd8f36acc0a70aba node tests/upgradeRecovery.integration.cjs
+```
+
 ## Live acceptance matrix
 
 Use harmless test content in a disposable document. Keep an editable page open
@@ -64,7 +94,7 @@ would erase the existing-user condition.
 | Same Store upgrade, refreshed page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
 | Same Store upgrade, new page | Pending | Pending | Pending | Pending | Needs an existing Store installation |
 | Disabled by 1.1.0 permission change → 1.1.2 | Pending | Pending | Pending | Pending | Record whether manual re-enable is required |
-| Unpacked 1.1.1 → 1.1.2, refreshed/new fixture | Pass | Pass | Pass | Pass | Local regression only |
+| Unpacked 1.1.1 / pre-change 1.1.2 → candidate, already-open/refreshed/new fixture | Pass | Pass | Pass | Pass, including Start | Local regression only |
 
 For the permission-disabled case, record enabled state both before and after the
 update, any permission prompt, and whether an explicit re-enable is needed.

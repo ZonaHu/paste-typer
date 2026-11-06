@@ -37,7 +37,8 @@ function installCurrentCopy() {
     const archive = execFileSync('git', ['archive', oldRef], { cwd: root });
     execFileSync('tar', ['-x', '-C', extension], { input: archive });
     grantFixtureOrigin();
-    assert.equal(JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json'))).version, '1.1.1');
+    const oldVersion = JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json'))).version;
+    const currentVersion = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'))).version;
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     context = await chromium.launchPersistentContext(path.join(scratch, 'profile'), {
       headless: true, channel: 'chrome', ignoreDefaultArgs: ['--disable-extensions'],
@@ -80,7 +81,24 @@ function installCurrentCopy() {
     await route({ action: 'startTyping', text: 'OLD', speed: 10, typoChance: 0 });
     await done(tabId);
     assert.equal(await page.locator('#input').inputValue(), 'OLD');
-    await worker.evaluate(() => chrome.storage.local.set({ upgradeFixture: 'preserved' }));
+    const legacySettings = { text: 'Saved source: café 🧪', speed: '35', typoChance: '5' };
+    const waitForSettings = async controls => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        const ready = await controls.locator('#textInput').evaluate((element, expected) => {
+          const scope = element.getRootNode(), remember = scope.querySelector('#rememberText');
+          return element.value === expected.text && scope.querySelector('#speedSlider').value === expected.speed &&
+            scope.querySelector('#typoChanceSlider').value === expected.typoChance &&
+            (!remember || remember.checked && !remember.disabled);
+        }, legacySettings);
+        if (ready) return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      throw new Error('Upgraded UI did not load the saved source and settings.');
+    };
+    await worker.evaluate(settings => chrome.storage.local.set({
+      upgradeFixture: 'preserved', pasteTyperSettings: settings
+    }), legacySettings);
     installCurrentCopy();
     const oldWorker = worker;
     const newWorker = context.waitForEvent('serviceworker', {
@@ -98,7 +116,7 @@ function installCurrentCopy() {
     while (Date.now() < deadline) {
       try {
         await wake.goto(`chrome-extension://${id}/popup.html`, { timeout: 1000 });
-        awake = await wake.evaluate(() => chrome.runtime.getManifest().version === '1.1.2');
+        awake = await wake.evaluate(version => chrome.runtime.getManifest().version === version, currentVersion);
         if (awake) break;
       } catch (error) {
         if (!/ERR_BLOCKED_BY_CLIENT|ERR_ABORTED|Timeout/i.test(error.message)) throw error;
@@ -109,28 +127,42 @@ function installCurrentCopy() {
     assert.ok(awake, `Reloaded extension page did not become available: ${wakeError?.message || 'wrong version'}`);
     worker = await newWorker;
     if (worker.startupError) throw new Error(worker.startupError);
+    await waitForSettings(wake);
+    assert.equal(await wake.locator('#textInput').inputValue(), legacySettings.text);
+    assert.equal(await wake.locator('#speedSlider').inputValue(), legacySettings.speed);
+    assert.equal(await wake.locator('#typoChanceSlider').inputValue(), legacySettings.typoChance);
+    const hasTypoHelper = await worker.evaluate(() => typeof PTTypoRate !== 'undefined');
+    if (hasTypoHelper) assert.equal(await wake.locator('#typoChanceValue').textContent(), '5%');
     await wake.close();
     const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
-    assert.equal(manifest.version, '1.1.2');
+    assert.equal(manifest.version, currentVersion);
     assert.equal(manifest.permissions.includes('webNavigation'), false);
     assert.equal(new URL(worker.url()).host, id);
     assert.equal((await worker.evaluate(() => chrome.storage.local.get('upgradeFixture'))).upgradeFixture, 'preserved');
+    const preservedSettings = (await worker.evaluate(() => chrome.storage.local.get('pasteTyperSettings'))).pasteTyperSettings;
+    for (const key of ['text', 'speed', 'typoChance']) assert.equal(preservedSettings[key], legacySettings[key]);
+    console.log('PASS saved Unicode source, legacy privacy default, speed and 5% typo setting survive upgrade');
     let oldTab;
     try { oldTab = await route({ action: 'startInputNavigation' }); }
     catch (error) { oldTab = { error: error.message }; }
     console.log('OBSERVED already-open tab after unpacked reload:', JSON.stringify(oldTab));
     assert.equal(await page.locator('#input').inputValue(), 'OLD', 'reload never rewrites the field');
-    for (const kind of ['refreshed', 'new']) {
-      const target = kind === 'refreshed' ? page : await context.newPage();
-      const targetUrl = kind === 'refreshed' ? url : url + '?new=1';
-      if (kind === 'refreshed') await target.reload(); else await target.goto(targetUrl);
+    if (oldTab.error) assert.match(oldTab.error, /refresh|reload|receiving end|connection/i);
+    else assert.ok(oldTab.count > 0, 'An already-open fixture must find its two editable fields.');
+    const pageKinds = oldTab.count > 0 ? ['already-open', 'refreshed', 'new'] : ['refreshed', 'new'];
+    for (const kind of pageKinds) {
+      const target = kind === 'new' ? await context.newPage() : page;
+      const targetUrl = kind === 'new' ? url + '?new=1' : url;
+      if (kind === 'refreshed') await target.reload();
+      else if (kind === 'new') await target.goto(targetUrl);
       const targetId = await findTab(targetUrl);
       assert.ok((await route({ action: 'startInputNavigation' }, targetId)).count > 0);
       await route({ action: 'stopInputNavigation' }, targetId);
       await target.locator('#input').focus();
+      await target.locator('#input').evaluate(element => element.setSelectionRange(element.value.length, element.value.length));
       await route({ action: 'startTyping', text: 'NEW', speed: 10, typoChance: 0 }, targetId);
       await done(targetId);
-      assert.equal(await target.locator('#input').inputValue(), 'NEW');
+      assert.equal(await target.locator('#input').inputValue(), kind === 'already-open' ? 'OLDNEW' : 'NEW');
       await route({ action: 'startTyping', text: 'long enough to stop', speed: 200, typoChance: 0 }, targetId);
       await route({ action: 'stopTyping' }, targetId);
       const stopped = await target.locator('#input').inputValue();
@@ -138,10 +170,27 @@ function installCurrentCopy() {
       assert.equal(await target.locator('#input').inputValue(), stopped);
       await route({ action: 'toggleFloatingUI' }, targetId);
       await target.locator('#paste-typer-floating-ui').locator('#startTyping').waitFor();
+      const panel = target.locator('#paste-typer-floating-ui');
+      await waitForSettings(panel);
+      assert.equal(await panel.locator('#textInput').inputValue(), legacySettings.text);
+      assert.equal(await panel.locator('#speedSlider').inputValue(), legacySettings.speed);
+      if (hasTypoHelper) assert.equal(await panel.locator('#typoChanceValue').textContent(), '5%');
       assert.equal(await target.locator('#other').inputValue(), 'UNTOUCHED');
-      console.log(`PASS ${kind} page: Navigate, Start, Stop, Floating UI opens`);
+      await panel.locator('#textInput').fill('PANEL');
+      await panel.locator('#typoChanceSlider').press('Home');
+      await target.locator('#input').focus();
+      await panel.locator('#startTyping').click();
+      // A trusted click starts asynchronous routing; old stopped progress is
+      // not completion of this new Start. Wait for its actual field delivery.
+      await target.waitForFunction(expected => document.getElementById('input').value === expected, stopped + 'PANEL');
+      await done(targetId);
+      assert.equal(await target.locator('#input').inputValue(), stopped + 'PANEL');
+      await panel.locator('#closeBtn').click();
+      // Restore the fixture settings before checking the next upgraded page.
+      await worker.evaluate(settings => chrome.storage.local.set({ pasteTyperSettings: settings }), legacySettings);
+      console.log(`PASS ${kind} page: Navigate, exact Start, Stop, Floating Start and saved settings`);
     }
-    console.log('ENVIRONMENT', JSON.stringify({ chrome: context.browser().version(), os: os.platform(), release: os.release(), from: oldRef, to: manifest.version }));
+    console.log('ENVIRONMENT', JSON.stringify({ chrome: context.browser().version(), os: os.platform(), release: os.release(), from: oldRef, oldVersion, to: manifest.version }));
     console.log('NOT TESTED: real Web Store update; permission-disabled installation recovery.');
   } finally {
     await context?.close();
