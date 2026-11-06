@@ -96,6 +96,18 @@ with visibility held through delivery: native foreground/switched/minimized took
 26/26 progress, and the same pause/resume/Stop observations passed. This successful
 replay does not erase the intermittent fixture failures above.
 
+Latest combined release-candidate replay (`a910606bdf4fe778e80982ae707ebbf3a195ed5a`,
+same Chrome/OS) passed native foreground exact output and pause/resume/Stop at
+1.25 s. The switched-away row failed its visibility prerequisite: Chrome reported
+the fixture tab inactive and unfocused but its document still visible. A bounded
+probe switching through Chrome's own tabs/window API had the same result. The
+unchanged pre-update runtime at `f3ca1d1` also failed this prerequisite in a
+control run. These replays therefore cannot measure hidden-page behavior or
+establish a background regression; minimized and local Docs-sink rows were not
+reached. Do not replace the historical matrix with a claim that the latest
+combined build passed those states. Keep the target visible until the real
+hidden/minimized and live Docs checks can be completed reliably.
+
 No separate engine defect was established by these measurements. The observed
 hidden-page slowdown is consistent with timer throttling; the safe response in
 this change is to communicate the limit and preserve an executable investigation.
