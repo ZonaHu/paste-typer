@@ -183,7 +183,7 @@ const server = http.createServer((req,res)=>{
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#speedSlider').inputValue(),'73');
   assert.equal(await page.locator('#paste-typer-floating-ui').locator('#typoChanceSlider').inputValue(),'11');
   const savedSettings=await worker.evaluate(()=>chrome.storage.local.get('pasteTyperSettings'));
-  assert.deepEqual(savedSettings.pasteTyperSettings,{text:'clipboard fixture',speed:'73',typoChance:'11'});
+  assert.deepEqual(savedSettings.pasteTyperSettings,{text:'clipboard fixture',speed:'73',typoChance:'11',rememberText:true});
   // Recreate, rather than just show, the panel to exercise storage loading too.
   await page.locator('#paste-typer-floating-ui').evaluate(host=>host.remove());
   await route({action:'toggleFloatingUI'});
