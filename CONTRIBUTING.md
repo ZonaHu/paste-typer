@@ -63,6 +63,8 @@ PT_TEST_DEPS=/path/to/test-deps node tests/splitCodeInput.integration.cjs
 
 It checks six `maxlength="1"` sibling inputs with page or adapter focus advance,
 partial starts, native Undo/Redo, typo correction, Stop, and group boundaries.
+It also verifies page-owned edits, canceled input, deferred value rejection, and
+inputs hidden by ancestor opacity or content visibility.
 The adapter recognizes contiguous visible, editable text/tel/password inputs;
 separators, ordinary controls and different parents end the group. Overflow stops
 with an error instead of writing outside that group.

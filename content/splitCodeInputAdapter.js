@@ -7,8 +7,12 @@ class SplitCodeInputAdapter extends StandardInputAdapter {
         element.disabled || element.readOnly || element.matches(':disabled') ||
         element.closest('#paste-typer-floating-ui, [hidden], [inert]') ||
         !element.getClientRects().length) return false;
-    const visibility = window.getComputedStyle(element).visibility;
-    return visibility !== 'hidden' && visibility !== 'collapse';
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+      const style = window.getComputedStyle(ancestor);
+      if (style.visibility === 'hidden' || style.visibility === 'collapse' ||
+          style.opacity === '0' || style.contentVisibility === 'hidden') return false;
+    }
+    return true;
   }
 
   static groupFor(element) {
@@ -54,32 +58,56 @@ class SplitCodeInputAdapter extends StandardInputAdapter {
       bubbles: true, cancelable: true }));
   }
 
-  _edit(element, char, deleting = false) {
+  async _edit(element, char, deleting = false) {
     const key = deleting ? 'Backspace' : char;
-    let accepted = this._key(element, 'keydown', key);
-    if (!deleting && accepted) accepted = this._key(element, 'keypress', key);
+    const expected = deleting ? '' : char;
+    const original = element.value;
     const inputType = deleting ? 'deleteContentBackward' : 'insertText';
-    if (accepted) accepted = element.dispatchEvent(new InputEvent('beforeinput', {
-      data: deleting ? null : char, inputType, bubbles: true, cancelable: true
-    }));
-    // A page handler may disable, remove or redirect the field during key events.
-    if (accepted && this._available(element) && document.activeElement === element) {
-      // Native editing preserves Chrome's selection and Undo history. Some pages
-      // reject execCommand; the native setter retains framework notifications there.
-      const previous = element.value;
-      const edited = document.execCommand(deleting ? 'delete' : 'insertText', false, deleting ? null : char);
-      if (!edited && element.value === previous) {
-        this._setNativeValue(element, deleting ? '' : char);
-        element.setSelectionRange(element.value.length, element.value.length);
-        element.dispatchEvent(new InputEvent('input', {
-          data: deleting ? null : char, inputType, bubbles: true
-        }));
+    let sawInput = false;
+    const observeInput = () => { sawInput = true; };
+    element.addEventListener('input', observeInput);
+    // Widgets may implement the edit and auto-advance inside a canceled key or
+    // beforeinput handler. Do not insert again after the page accepted it.
+    const pageHandled = () => element.value === expected && (element.value !== original || sawInput);
+    try {
+      let allowed = this._key(element, 'keydown', key);
+      await Promise.resolve();
+      if (!pageHandled() && !deleting && allowed) {
+        allowed = this._key(element, 'keypress', key);
+        await Promise.resolve();
       }
-    } else {
-      accepted = false;
+      if (!pageHandled() && allowed) {
+        allowed = element.dispatchEvent(new InputEvent('beforeinput', {
+          data: deleting ? null : char, inputType, bubbles: true, cancelable: true
+        }));
+        await Promise.resolve();
+      }
+      let edited = pageHandled();
+      // A page handler may disable, remove or redirect the field during events.
+      if (!edited && allowed && this._available(element) && document.activeElement === element) {
+        // Native editing preserves Chrome's selection and Undo history. Fall
+        // back only when the command produced neither a change nor an input.
+        const previous = element.value;
+        const commandAccepted = document.execCommand(deleting ? 'delete' : 'insertText', false, deleting ? null : char);
+        await Promise.resolve();
+        if (!commandAccepted && !sawInput && element.value === previous &&
+            this._available(element) && document.activeElement === element) {
+          this._setNativeValue(element, expected);
+          element.setSelectionRange(expected.length, expected.length);
+          element.dispatchEvent(new InputEvent('input', {
+            data: deleting ? null : char, inputType, bubbles: true
+          }));
+        }
+        edited = true;
+      }
+      this._key(element, 'keyup', key);
+      // Framework input/keyup handlers may restore a rejected value in a
+      // microtask; report that rejection before advancing to another box.
+      await Promise.resolve();
+      return edited && element.value === expected;
+    } finally {
+      element.removeEventListener('input', observeInput);
     }
-    this._key(element, 'keyup', key);
-    return accepted && element.value === (deleting ? '' : char);
   }
 
   async typeCharacter(element, char) {
@@ -93,7 +121,7 @@ class SplitCodeInputAdapter extends StandardInputAdapter {
     }
     target.focus({ preventScroll: true });
     target.setSelectionRange(0, target.value.length);
-    if (!this._edit(target, char)) return { success: false, error: 'The code input did not accept the character.' };
+    if (!await this._edit(target, char)) return { success: false, error: 'The code input did not accept the character.' };
     this.history.push(this.index);
     this.index++;
     const next = this.group[this.index];
@@ -112,7 +140,7 @@ class SplitCodeInputAdapter extends StandardInputAdapter {
     // inserted digit, rather than deleting a pre-existing neighbouring digit.
     target.focus({ preventScroll: true });
     target.setSelectionRange(0, target.value.length);
-    if (!this._edit(target, '', true)) return { success: false, error: 'The code input did not accept backspace.' };
+    if (!await this._edit(target, '', true)) return { success: false, error: 'The code input did not accept backspace.' };
     this.history.pop();
     this.index = index;
     return { success: true };

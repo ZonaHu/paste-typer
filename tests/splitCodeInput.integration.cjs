@@ -47,15 +47,25 @@ const server = http.createServer((req, res) => {
       throw new Error('Typing timed out');
     };
     const values = () => page.locator('#code input').evaluateAll(inputs => inputs.map(input => input.value));
-    const isolated = func => worker.evaluate(async ({ tabId, source }) => {
+    const isolated = action => worker.evaluate(async ({ tabId, action }) => {
       const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED',
-        func: source => eval(`(${source})()`), args: [source] });
+        func: action => {
+          if (action === 'configure') { pasteTyper.pauseChance = 0; pasteTyper.speedVariation = 0; }
+          if (action === 'fastCorrection') pasteTyper.typoCorrectionDelay = 0;
+          if (action === 'countNative') {
+            globalThis.nativeEdits = 0;
+            const exec = document.execCommand.bind(document);
+            document.execCommand = (...args) => { globalThis.nativeEdits++; return exec(...args); };
+          }
+          if (action === 'nativeEdits') return globalThis.nativeEdits;
+          if (action === 'detect') return SplitCodeInputAdapter.detect(document.getElementById('digit0'));
+        }, args: [action] });
       return result;
-    }, { tabId, source: func.toString() });
+    }, { tabId, action });
     const prepare = async ({ autoAdvance = false, start = 0, initial = '' } = {}) => {
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       await worker.evaluate(tabId => frameRouter.prepare(tabId), tabId);
-      await isolated(() => { pasteTyper.pauseChance = 0; pasteTyper.speedVariation = 0; });
+      await isolated('configure');
       await page.evaluate(({ autoAdvance, start, initial }) => {
         window.events = [];
         const inputs = [...document.querySelectorAll('#code input')];
@@ -128,7 +138,7 @@ const server = http.createServer((req, res) => {
     }
     console.log('PASS disabled, read-only, hidden, ordinary-control and parent boundaries');
     await prepare({ autoAdvance: true });
-    await isolated(() => { pasteTyper.typoCorrectionDelay = 0; });
+    await isolated('fastCorrection');
     assert.equal((await type('483920', { typoChance: 1 })).error, null);
     assert.deepEqual(await values(), ['4', '8', '3', '9', '2', '0']);
     assert.ok(await page.evaluate(() => window.events.some(event => event.inputType === 'deleteContentBackward')));
@@ -149,6 +159,72 @@ const server = http.createServer((req, res) => {
     assert.match((await type('483920')).error, /no longer available/);
     assert.deepEqual(await values(), ['4', '', '', '', '', '']);
     console.log('PASS dynamically disabled next field stops instead of skipping');
+    const reviewFailures = [];
+    const checkReview = async (name, run) => {
+      try { await run(); console.log(`PASS ${name}`); }
+      catch (error) { reviewFailures.push(`${name}: ${error.message}`); console.error(`FAIL ${name}: ${error.message}`); }
+    };
+    for (const stage of ['keydown', 'beforeinput']) {
+      for (const cancel of [false, true]) {
+        await checkReview(`page-owned ${stage} insertion (cancel=${cancel}) advances without duplicate editing`, async () => {
+          await prepare();
+          await isolated('countNative');
+          await page.evaluate(({ stage, cancel }) => {
+            for (const input of document.querySelectorAll('#code input')) input.addEventListener(stage, event => {
+              if (cancel) event.preventDefault();
+              const char = stage === 'keydown' ? event.key : event.data;
+              input.value = char;
+              input.dispatchEvent(new InputEvent('input', { data: char, inputType: 'insertText', bubbles: true }));
+              input.nextElementSibling?.focus();
+            });
+          }, { stage, cancel });
+          assert.equal((await type('483920')).error, null);
+          assert.deepEqual(await values(), ['4', '8', '3', '9', '2', '0']);
+          assert.equal(await isolated('nativeEdits'), 0);
+          assert.equal(await page.evaluate(() => events.filter(event => event.type === 'input').length), 6);
+        });
+      }
+    }
+    await checkReview('canceled beforeinput without page insertion rejects the character', async () => {
+      await prepare();
+      await page.evaluate(() => document.getElementById('digit0').addEventListener('beforeinput', event => event.preventDefault()));
+      const state = await type('483920');
+      assert.match(state.error, /did not accept/);
+      assert.equal(state.position, 0);
+      assert.deepEqual(await values(), ['', '', '', '', '', '']);
+      assert.equal(await page.evaluate(() => events.filter(event => event.type === 'input').length), 0);
+    });
+    for (const [stage, microtask] of [['input', false], ['input', true], ['keyup', true]]) {
+      await checkReview(`${stage} ${microtask ? 'microtask' : 'synchronous'} restoration rejects the character`, async () => {
+        await prepare();
+        await page.evaluate(({ stage, microtask }) => {
+          for (const input of document.querySelectorAll('#code input')) input.addEventListener(stage, () => {
+            const restore = () => { input.value = ''; };
+            if (microtask) queueMicrotask(restore); else restore();
+          });
+        }, { stage, microtask });
+        const state = await type('483920');
+        assert.match(state.error, /did not accept/);
+        assert.equal(state.position, 0);
+        assert.deepEqual(await values(), ['', '', '', '', '', '']);
+      });
+    }
+    for (const property of ['opacity', 'contentVisibility']) {
+      await checkReview(`${property} hidden ancestor excludes the group and interrupts an existing session`, async () => {
+        await prepare();
+        const eligible = await isolated('detect');
+        assert.equal(eligible, true);
+        await page.evaluate(property => { document.getElementById('code').style[property] = property === 'opacity' ? '0' : 'hidden'; }, property);
+        assert.equal(await isolated('detect'), false);
+        await prepare();
+        await page.evaluate(property => document.getElementById('digit0').addEventListener('input', () => {
+          document.getElementById('code').style[property] = property === 'opacity' ? '0' : 'hidden';
+        }), property);
+        assert.match((await type('483920')).error, /no longer available/);
+        assert.deepEqual(await values(), ['4', '', '', '', '', '']);
+      });
+    }
+    assert.deepEqual(reviewFailures, []);
   } finally {
     await context?.close();
     server.close();

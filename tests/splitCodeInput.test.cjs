@@ -10,7 +10,7 @@ function setup({ autoAdvance = false } = {}) {
     constructor(options = {}) {
       Object.assign(this, { tagName: 'INPUT', type: 'text', maxLength: 1,
         isConnected: true, disabled: false, readOnly: false, hidden: false,
-        selectionStart: 0, selectionEnd: 0, events: [], _value: '' }, options);
+        selectionStart: 0, selectionEnd: 0, events: [], listeners: new Map(), _value: '' }, options);
     }
     get value() { return this._value; }
     set value(value) { this._value = value; }
@@ -21,8 +21,14 @@ function setup({ autoAdvance = false } = {}) {
     getClientRects() { return this.hidden ? [] : [{}]; }
     focus() { document.activeElement = this; }
     setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+      this.listeners.get(type).add(listener);
+    }
+    removeEventListener(type, listener) { this.listeners.get(type)?.delete(listener); }
     dispatchEvent(event) {
       this.events.push(event);
+      for (const listener of this.listeners.get(event.type) || []) listener(event);
       if (autoAdvance && event.type === 'input' && event.inputType === 'insertText') this.nextElementSibling?.focus();
       return !event.defaultPrevented;
     }
