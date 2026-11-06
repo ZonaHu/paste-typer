@@ -217,7 +217,7 @@ class PopupController {
     this.lastSessionId = progress.sessionId;
     const active = state === 'running' || state === 'paused';
     this._setControls(active);
-    this.startButton.disabled = state === 'stopping';
+    this.startButton.disabled = active || state === 'stopping';
     this.pauseButton.textContent = state === 'paused' ? 'Resume' : 'Pause';
     this.pauseButton.style.backgroundColor = state === 'paused' ? '#16a34a' : '#f59e0b';
     this.progressContainer.style.display = active ? 'block' : 'none';

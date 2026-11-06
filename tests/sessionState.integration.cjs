@@ -64,6 +64,8 @@ const server = http.createServer((req, res) => {
     await popup.locator('#pauseTyping').filter({ hasText: 'Resume' }).waitFor();
     await panel.locator('#pauseTyping').filter({ hasText: 'Resume' }).waitFor();
     assert.equal((await route({ action: 'getTypingProgress' })).state, 'paused');
+    assert.equal(await popup.locator('#startTyping').isDisabled(), true);
+    assert.equal(await panel.locator('#startTyping').isDisabled(), true);
     const pausedText = await page.locator('#textarea').inputValue();
     await new Promise(resolve => setTimeout(resolve, 1400));
     assert.equal(await page.locator('#textarea').inputValue(), pausedText, 'paused correction cannot backspace or type');
