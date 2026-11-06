@@ -105,9 +105,13 @@ Chrome's protected pages, including the Chrome Web Store, cannot be used.
 | Google Docs / Slides canvas | Keystrokes sent; check the document |
 | Monaco textarea-based editor (including permitted iframes) | ✅ |
 
-Google Docs and Slides do not expose accepted canvas text to the extension, so
-their completion message cannot confirm the final document contents. Check the
-document after typing; background-tab reliability remains under investigation.
+Ordinary inputs, contenteditable fields, and supported Monaco editors verify the
+observed text after each simulated input, including immediate event-handler
+responses. A detected change or rejection stops typing and retains the source
+and failure position. Later page changes cannot be verified by this check.
+Google Docs and Slides do not expose accepted canvas text safely, so their
+completion message asks you to check the document. No automatic retry rewrites
+your field.
 
 ## How it works
 
