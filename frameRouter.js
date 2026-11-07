@@ -24,8 +24,15 @@ class FrameRouter {
     // frames we may actually address, without a browsing-history permission.
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true }, world: 'ISOLATED',
-      func: () => ({ url: location.href,
-        embeddedUrls: Array.from(document.querySelectorAll('iframe[src]'), iframe => iframe.src) })
+      func: () => {
+        let googleDocsInputSink = false;
+        try {
+          googleDocsInputSink = window.parent === window.top &&
+            window.frameElement?.classList?.contains('docs-texteventtarget-iframe') === true;
+        } catch { /* A cross-origin frame cannot identify its parent element. */ }
+        return { url: location.href, googleDocsInputSink,
+          embeddedUrls: Array.from(document.querySelectorAll('iframe[src]'), iframe => iframe.src) };
+      }
     }).catch(error => {
       if (/extensions gallery cannot be scripted/i.test(error.message)) {
         throw new Error('Chrome does not allow Paste Typer to run on the Chrome Web Store. Open a regular website and try again.');
@@ -34,7 +41,8 @@ class FrameRouter {
     });
     return (results || []).filter(({ result }) => result && typeof result.url === 'string')
       .map(({ frameId, documentId, result }) => ({
-        frameId, documentId, url: result.url, embeddedUrls: result.embeddedUrls
+        frameId, documentId, url: result.url, embeddedUrls: result.embeddedUrls,
+        googleDocsInputSink: result.googleDocsInputSink === true
       }));
   }
 
@@ -96,10 +104,19 @@ class FrameRouter {
     const frames = await this.frames(tabId);
     const top = frames.find(frame => frame.frameId === 0);
     if (!top) throw new Error('The page is no longer available.');
-    const topOrigin = new URL(top.url).origin;
+    const topUrl = new URL(top.url);
+    const topOrigin = topUrl.origin;
+    // Docs owns its hidden keyboard-event iframe from the top document. That
+    // iframe can report a newer editable target, but treating it as an ordinary
+    // field bypasses the Docs adapter and produces a false rejection.
+    const docsPage = topUrl.hostname === 'docs.google.com' &&
+      /^\/(document|presentation)\//.test(topUrl.pathname);
+    const docsInputSinkFrameIds = docsPage
+      ? frames.filter(frame => frame.googleDocsInputSink).map(frame => frame.frameId) : [];
+    const routableFrames = frames.filter(frame => !docsInputSinkFrameIds.includes(frame.frameId));
     const missing = new Set();
     const available = [];
-    for (const frame of frames) {
+    for (const frame of routableFrames) {
       for (const url of frame.embeddedUrls || []) {
         let origin;
         try { origin = new URL(url).origin; } catch { continue; }
@@ -108,7 +125,7 @@ class FrameRouter {
         if (!await chrome.permissions.contains({ origins: [pattern] })) missing.add(pattern);
       }
     }
-    await Promise.all(frames.map(async frame => {
+    await Promise.all(routableFrames.map(async frame => {
       let origin;
       try { origin = new URL(frame.url).origin; } catch { return; }
       if (!/^https?:/.test(frame.url) && !frame.url.startsWith('about:')) return;
@@ -128,11 +145,11 @@ class FrameRouter {
         if (frame.frameId === 0 || error.code === 'PT_REFRESH_REQUIRED') throw error;
       }
     }));
-    return { available, missingOrigins: [...missing].sort() };
+    return { available, missingOrigins: [...missing].sort(), docsInputSinkFrameIds };
   }
 
   async route(tabId, message, preferredFrameId) {
-    const { available } = await this.prepare(tabId);
+    const { available, docsInputSinkFrameIds } = await this.prepare(tabId);
     if (message.action === 'startTyping' && available.some(candidate => candidate.info.isTyping)) {
       throw new Error('Typing is already running. Stop it before selecting another editor.');
     }
@@ -141,6 +158,9 @@ class FrameRouter {
       frame = available.find(candidate => candidate.frameId === 0);
     } else if (preferredFrameId !== undefined) {
       frame = available.find(candidate => candidate.frameId === preferredFrameId);
+      if (!frame && docsInputSinkFrameIds.includes(preferredFrameId)) {
+        frame = available.find(candidate => candidate.frameId === 0);
+      }
     } else {
       // Progress and stop/pause/resume stay with the running session. A new
       // start follows the most recently selected editor, not an old session.

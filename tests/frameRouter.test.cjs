@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setup({ denied = false, running = false, partial = false, legacy = false, legacyFrame = 0, helperOnly = false, missingTypoRate = false } = {}) {
+function setup({ denied = false, running = false, partial = false, legacy = false, legacyFrame = 0, helperOnly = false, missingTypoRate = false, docs = false } = {}) {
   const sent = [];
   const injected = [];
   const loaded = new Set(partial ? [0] : legacy ? [legacyFrame] : []);
@@ -13,7 +13,10 @@ function setup({ denied = false, running = false, partial = false, legacy = fals
   const injectedFiles = [];
   const session = {};
   const listeners = [];
-  const frames = [
+  const frames = docs ? [
+    { frameId: 0, documentId: 'docs', url: 'https://docs.google.com/document/d/fixture/edit' },
+    { frameId: 7, documentId: 'docs-input', url: 'about:blank', googleDocsInputSink: true }
+  ] : [
     { frameId: 0, documentId: 'parent', url: 'https://parent.test/',
       embeddedUrls: ['https://editor.test/', 'https://advert.test/'] },
     { frameId: 7, documentId: 'editor', url: 'https://editor.test/' },
@@ -27,8 +30,8 @@ function setup({ denied = false, running = false, partial = false, legacy = fals
       assert.equal(world, 'ISOLATED');
       if (target.allFrames) return frames.map(frame => ({ frameId: frame.frameId,
         documentId: frame.documentId, result: frame.frameId === 0 ||
-        (!denied && frame.frameId !== 9) ? { url: frame.url,
-          embeddedUrls: frame.embeddedUrls || [] } : null }));
+        (!denied && (docs || frame.frameId !== 9)) ? { url: frame.url,
+        embeddedUrls: frame.embeddedUrls || [], googleDocsInputSink: !!frame.googleDocsInputSink } : null }));
       const id = target.frameIds[0];
       if (files) {
         injected.push(id); injectedFiles.push([...files]);
@@ -41,6 +44,9 @@ function setup({ denied = false, running = false, partial = false, legacy = fals
     } },
     tabs: { sendMessage: async (tabId, message, options) => {
       sent.push({ tabId, message, options });
+      if (docs && message.action === 'getTargetInfo' && options.frameId === 9) {
+        return { hasTarget: true, changedAt: 200, isTyping: false, focused: true };
+      }
       if (message.action === 'getTargetInfo') return options.frameId === 7
         ? { hasTarget: true, changedAt: 100, isTyping: running, focused: false }
         : { hasTarget: true, changedAt: 1, isTyping: false, focused: false };
@@ -84,6 +90,35 @@ test('start targets only the most recently selected frame and its document', asy
   await router.route(1, { action: 'startTyping', text: 'abc' });
   assert.deepEqual({ ...sent.at(-1).options }, { documentId: 'editor' });
   assert.equal(sent.filter(s => s.message.action === 'startTyping').length, 1);
+});
+
+test('Google Docs Start bypasses its hidden input iframe and uses the canvas adapter in the top document', async () => {
+  const { router, sent, injected } = setup({ docs: true });
+  await router.route(1, { action: 'startTyping', text: 'safe test' });
+  assert.deepEqual({ ...sent.at(-1).options }, { documentId: 'docs' });
+  assert.deepEqual(injected, [0]);
+  await router.route(1, { action: 'getTypingProgress' });
+  assert.deepEqual({ ...sent.at(-1).options }, { documentId: 'docs' });
+});
+
+test('an explicit command from the Google Docs input iframe also routes to the owning document', async () => {
+  const { router, sent } = setup({ docs: true });
+  await router.route(1, { action: 'startTyping', text: 'safe test' }, 7);
+  assert.deepEqual({ ...sent.at(-1).options }, { documentId: 'docs' });
+});
+
+test('an unrelated page does not discard an iframe merely because it has the Docs sink class', async () => {
+  const { router, frames, sent } = setup();
+  frames[1].googleDocsInputSink = true;
+  await router.route(1, { action: 'startTyping', text: 'safe test' });
+  assert.deepEqual({ ...sent.at(-1).options }, { documentId: 'editor' });
+});
+
+test('Google Docs still routes to an independently selected embedded editor', async () => {
+  const { router, frames, sent } = setup({ docs: true });
+  frames.push({ frameId: 9, documentId: 'embedded-editor', url: 'https://editor.test/' });
+  await router.route(1, { action: 'startTyping', text: 'safe test' });
+  assert.deepEqual({ ...sent.at(-1).options }, { documentId: 'embedded-editor' });
 });
 
 test('denied cross-origin access is listed, never injected', async () => {
