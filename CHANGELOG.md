@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.2.2 — 2026-11-08
+
+Google Docs accepts typed text again. There was no 1.2.1 release.
+
+### 🧰 Fixes
+- **Google Docs** — Route the hidden input iframe to the Docs adapter instead of selecting it as an ordinary editable field, which made Docs reject every character. ([#42](https://github.com/ZonaHu/paste-typer/pull/42))
+
+Validated with 104 Node checks and a disposable Chrome fixture confirming `A中B` reaches the document through the Docs adapter. Live Google Docs acceptance still needs a manual check.
+
+**Full Changelog**: https://github.com/ZonaHu/paste-typer/compare/v1.2.0...v1.2.2
+
+## v1.2.0 — 2026-11-06
+
+Paste Typer fills split verification-code boxes, types in CodeMirror 6 editors, and now verifies that the page actually accepted each character before reporting success.
+
+### 💡 Enhancements
+- **Verification codes** — Fill adjacent one-character boxes in order and stop at the group boundary. ([#30](https://github.com/ZonaHu/paste-typer/pull/30))
+- **CodeMirror 6** — Type through the selected editor's transaction API, preserving its filters and native Undo history. ([#31](https://github.com/ZonaHu/paste-typer/pull/31))
+- **Emergency Stop** — A configurable Chrome shortcut stops the active frame, and an older Clear can no longer erase a new Start. ([#23](https://github.com/ZonaHu/paste-typer/pull/23))
+- **Saved source text** — Remember text and Delete saved text behave the same in the popup and the floating panel, including before settings finish loading. ([#22](https://github.com/ZonaHu/paste-typer/pull/22))
+
+### 🧰 Fixes & Housekeeping
+- **Accepted text** — Check the settled text and caret before advancing progress, and stop on rejected or redirected edits instead of reporting success. ([#29](https://github.com/ZonaHu/paste-typer/pull/29))
+- **Unicode** — Type and delete complete grapheme clusters, and reject malformed surrogate input. ([#28](https://github.com/ZonaHu/paste-typer/pull/28))
+- **Typo rate** — Popup, floating controls, storage and the engine share one percentage unit, so a saved 5 means 5%. ([#27](https://github.com/ZonaHu/paste-typer/pull/27))
+- **Target selection** — Skip file, hidden, disabled, read-only and non-editable controls when Start or Navigate picks a field. ([#21](https://github.com/ZonaHu/paste-typer/pull/21), [#25](https://github.com/ZonaHu/paste-typer/pull/25), [#26](https://github.com/ZonaHu/paste-typer/pull/26))
+- **Notion** — Clear refuses Notion pages and block-based editors, where a synthetic Select All could delete the page title. ([#38](https://github.com/ZonaHu/paste-typer/pull/38))
+- **Chrome Web Store pages** — Explain that Chrome blocks extensions there rather than reporting a generic failure. ([#25](https://github.com/ZonaHu/paste-typer/pull/25))
+- **Reporting and validation docs** — Site issue template and reproduction guide, an executable unpacked-upgrade regression, and the Word body investigation notes. ([#32](https://github.com/ZonaHu/paste-typer/pull/32), [#33](https://github.com/ZonaHu/paste-typer/pull/33), [#35](https://github.com/ZonaHu/paste-typer/pull/35))
+
+Validated with 100 Node checks plus Chrome suites for ordinary fields, session state, Monaco 0.57 and CodeMirror 6. Refresh already-open pages after updating.
+
+Known follow-ups: ProseMirror ([#5](https://github.com/ZonaHu/paste-typer/issues/5)), Monaco EditContext ([#4](https://github.com/ZonaHu/paste-typer/issues/4)), Office on the web ([#6](https://github.com/ZonaHu/paste-typer/issues/6)) and background-tab reliability ([#14](https://github.com/ZonaHu/paste-typer/issues/14)).
+
+**Full Changelog**: https://github.com/ZonaHu/paste-typer/compare/v1.1.2...v1.2.0
+
 ## v1.1.2 — 2026-10-29
 
 Paste Typer no longer requires the browsing-history permission added in 1.1. Existing installations that Chrome already paused may still need to be re-enabled once in the extension manager.
