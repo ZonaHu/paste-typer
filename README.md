@@ -85,6 +85,10 @@ in other tabs.
 
 **Floating UI** — open it from the popup when you need the controls to stay visible while you work.
 
+**Support development** — Paste Typer remains free. If it helps you, the optional
+link at the bottom of the popup opens a [Stripe-hosted support page](https://buy.stripe.com/eVq7sD6jXcW19Cm90G3oA00)
+in a new tab. Payment details are entered on Stripe, never in the extension.
+
 **Typo rate** — the slider is a percentage per eligible character: 5 means a 5%
 chance. Earlier labels understated the rate while the typing engine used the
 saved value as a percentage. Saved slider values keep that meaning: a saved 5

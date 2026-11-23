@@ -1,6 +1,6 @@
 # Paste Typer — Privacy Policy
 
-_Last updated: 2026-11-05_
+_Last updated: 2026-11-23_
 
 Paste Typer is a Chrome extension that types clipboard text character-by-character
 into web forms. This policy describes what data the extension handles.
@@ -62,6 +62,13 @@ are registered.
 
 The extension does not include any analytics, telemetry, advertising SDK,
 crash reporter, or third-party network call.
+
+The optional "Support development" link in the popup opens a Stripe-hosted
+payment page in a new tab only if you click it. The extension does not read or
+transmit your payment details or any optional message you enter there. Stripe
+handles that page under its own privacy policy and terms. If a message field is
+enabled, the developer can see messages submitted with completed payments in
+Stripe's dashboard.
 
 ## Children
 
