@@ -256,6 +256,18 @@
     .navigation-row .btn, .navigation-buttons .btn { padding: 8px 12px; font-size: 12px; }
 
     .help-text { font-size: 11px; color: var(--faint); margin-top: 2px; line-height: 1.45; }
+
+    .support-footer {
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .support-footer a { color: var(--accent-strong); text-decoration: none; font-weight: 600; }
+    .support-footer a:hover { text-decoration: underline; }
+    .support-footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+    .support-provider { margin-top: 2px; color: var(--faint); font-size: 10px; }
   </style>
 </head>
 <body>
@@ -347,6 +359,10 @@
       <div class="help-text">Choose the site hosting your editor. Access is optional and can be revoked in Chrome's extension settings. After allowing, click the editor before starting.</div>
     </div>
     <div id="elementInfo" class="element-info" style="display: none;"></div>
+    <div class="support-footer">
+      Paste Typer is free. <a href="https://buy.stripe.com/eVq7sD6jXcW19Cm90G3oA00" target="_blank" rel="noopener noreferrer" aria-label="Support Paste Typer on Stripe (opens a new tab)">Support development ↗</a>
+      <div class="support-provider">Checkout by SOLA SPIN on Stripe</div>
+    </div>
   </div>
 
   <script src="content/typoRate.js"></script>
